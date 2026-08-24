@@ -1,0 +1,117 @@
+# Перезапускать скрипт при сохранении файла. Учти: Streamlit перезагружает
+# только app.py, а модули из src/lad/ остаются в памяти такими, какими были
+# при первом импорте. После правки модуля сервер надо ПЕРЕЗАПУСТИТЬ,
+# иначе получишь ImportError на функции, которой «нет» (а она есть).
+[server]
+runOnSave = true
+headless = true
+
+[browser]
+gatherUsageStats = false
+
+[client]
+# Убирает кнопку Deploy и меню разработчика: завуч не должен их видеть.
+toolbarMode = "minimal"
+
+# ------------------------------------------------------------------ тема
+#
+# Монохром: чёрный, белый, серый. Цвет остаётся только за смыслом —
+# нарушение нормы красное, всё сошлось зелёное. Так документ и выглядит
+# документом, а не приложением.
+#
+# Заголовки набраны антиквой (Source Serif 4) — шрифт с засечками читается
+# как постановление и учебник, гротеск — как стартап. Текст и таблицы —
+# Inter: в цифрах и мелком кегле засечки мешают.
+
+[theme]
+font = "'Inter':https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+headingFont = "'Source Serif 4':https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&display=swap"
+codeFont = "'JetBrains Mono':https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
+baseFontSize = 15
+baseFontWeight = 400
+headingFontSizes = ["40px", "30px", "23px", "18px", "16px", "14px"]
+headingFontWeights = [700, 700, 600, 600, 600, 600]
+codeFontSize = "0.85rem"
+baseRadius = "12px"
+buttonRadius = "8px"
+showWidgetBorder = true
+showSidebarBorder = false
+linkUnderline = true
+
+[theme.light]
+primaryColor = "#18181B"
+backgroundColor = "#F4F4F5"
+secondaryBackgroundColor = "#FFFFFF"
+codeBackgroundColor = "#F4F4F5"
+textColor = "#09090B"
+linkColor = "#18181B"
+borderColor = "#E4E4E7"
+grayColor = "#71717A"
+blueColor = "#1D4ED8"
+greenColor = "#15803D"
+redColor = "#B91C1C"
+orangeColor = "#B45309"
+yellowColor = "#A16207"
+violetColor = "#6D28D9"
+# Подложки уведомлений. По умолчанию st.info выводится ярко-синей плашкой —
+# в монохроме она бьёт по глазам сильнее самого текста. Оставляем цвет только
+# там, где он несёт смысл (ошибка, успех), и приглушаем до фона документа.
+blueBackgroundColor = "#F4F4F5"
+blueTextColor = "#3F3F46"
+greenBackgroundColor = "#F1F7F3"
+greenTextColor = "#14532D"
+redBackgroundColor = "#FBF3F2"
+redTextColor = "#7F1D1D"
+orangeBackgroundColor = "#FAF6EE"
+orangeTextColor = "#78350F"
+yellowBackgroundColor = "#FAF7EC"
+yellowTextColor = "#713F12"
+dataframeBorderColor = "#E4E4E7"
+dataframeHeaderBackgroundColor = "#F4F4F5"
+chartCategoricalColors = ["#18181B", "#52525B", "#A1A1AA", "#D4D4D8", "#1D4ED8", "#15803D", "#B91C1C"]
+
+# Чёрный сайдбар — как в референсе: инструменты отделены от документа.
+[theme.light.sidebar]
+backgroundColor = "#111113"
+secondaryBackgroundColor = "#1F1F23"
+codeBackgroundColor = "#1F1F23"
+textColor = "#F4F4F5"
+borderColor = "#2A2A2E"
+primaryColor = "#A1A1AA"
+linkColor = "#E4E4E7"
+
+[theme.dark]
+primaryColor = "#52525B"
+backgroundColor = "#09090B"
+secondaryBackgroundColor = "#161618"
+codeBackgroundColor = "#161618"
+textColor = "#F4F4F5"
+linkColor = "#E4E4E7"
+borderColor = "#27272A"
+grayColor = "#A1A1AA"
+blueColor = "#60A5FA"
+greenColor = "#4ADE80"
+redColor = "#F87171"
+orangeColor = "#FBBF24"
+yellowColor = "#FDE047"
+violetColor = "#A78BFA"
+blueBackgroundColor = "#1C1C1F"
+blueTextColor = "#D4D4D8"
+greenBackgroundColor = "#12261A"
+greenTextColor = "#86EFAC"
+redBackgroundColor = "#2A1616"
+redTextColor = "#FCA5A5"
+orangeBackgroundColor = "#2A2114"
+orangeTextColor = "#FCD34D"
+yellowBackgroundColor = "#292315"
+yellowTextColor = "#FDE68A"
+dataframeBorderColor = "#27272A"
+dataframeHeaderBackgroundColor = "#161618"
+chartCategoricalColors = ["#F4F4F5", "#A1A1AA", "#71717A", "#52525B", "#60A5FA", "#4ADE80", "#F87171"]
+
+[theme.dark.sidebar]
+backgroundColor = "#000000"
+secondaryBackgroundColor = "#161618"
+textColor = "#F4F4F5"
+borderColor = "#27272A"
+primaryColor = "#A1A1AA"

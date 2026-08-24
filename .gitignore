@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+out/
+
+# секреты Streamlit Cloud — никогда в репо
+.streamlit/secrets.toml
+
+# локальная обвязка Claude Code — симлинки на скиллы, машине деплоя не нужны
+.agents/
+.claude/
