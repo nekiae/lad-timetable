@@ -228,6 +228,13 @@ def _rooms_for(load: pd.DataFrame, subjects: pd.DataFrame, periods: int, days: i
         for kind, count in need_here.items():
             parallel_need[kind] = max(parallel_need.get(kind, 0), count)
 
+    # Обычных кабинетов не может быть меньше, чем классов в школе. Класс учится
+    # без окон, значит на первом уроке заняты ВСЕ классы разом, и каждому нужна
+    # своя комната. Расчёт «по часам за неделю» этого не видит: 645 часов на 17
+    # кабинетов формально помещаются в 680 мест, а расписания не существует.
+    # Найдено 25.08.2026 на гимназии в 28 классов — солвер молчал семь минут.
+    classes_count = load["класс"].nunique()
+
     rows, number = [], 101
     for kind, need in sorted(hours.items()):
         if kind == "спортзал":
@@ -235,6 +242,12 @@ def _rooms_for(load: pd.DataFrame, subjects: pd.DataFrame, periods: int, days: i
         else:
             count = max(1, math.ceil(need / (periods * days) * reserve))
         count = max(count, parallel_need.get(kind, 0))
+        if kind == "обычный":
+            # Спецкабинеты снимают часть пиковой нагрузки: класс, ушедший
+            # в спортзал, обычную комнату не занимает. Поэтому не «по классу
+            # на каждый», а с поправкой на долю уроков в спецкабинетах.
+            share = need / max(1, sum(hours.values()))
+            count = max(count, math.ceil(classes_count * share) + 1)
         for _ in range(count):
             label = str(number) if kind == "обычный" else f"{kind.capitalize()} {number}"
             rows.append({"кабинет": label, "тип": kind, "мест": 30})

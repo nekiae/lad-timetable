@@ -886,15 +886,27 @@ with tabs[8]:
                     "занимает около двух минут, и чем строже нормы, тем дольше. "
                     "Увеличьте время слева и запустите ещё раз.",
                     icon=":material/hourglass_empty:")
-                if budget < 900 and st.button("Искать дольше", type="primary",
-                                              icon=":material/more_time:"):
+                # Ждать дольше — не единственный выход, и часто не тот.
+                # Поиск ПЕРВОГО решения и доказательство того, что решения нет, —
+                # разные режимы работы солвера: гимназия в 28 классов молчала
+                # семь минут, а невыполнимость из-за нехватки кабинетов
+                # доказывалась за семь секунд. Поэтому разбор предлагается
+                # наравне с «подождать ещё», а не после.
+                longer, why = st.columns(2)
+                if budget < 900 and longer.button("Искать дольше", type="primary",
+                                                  width="stretch",
+                                                  icon=":material/more_time:"):
                     st.session_state.job = SolveJob(school, max_seconds=budget * 2,
                                                     weights=weights, rules=rules)
                     st.session_state.job.start()
                     st.rerun()
-                st.caption("Если и с большим временем не выходит — ослабьте одну "
-                           "из норм на вкладке «Нормы»: там же написано, какая "
-                           "чем обоснована.")
+                if why.button("Разобраться, почему", width="stretch",
+                              icon=":material/troubleshoot:"):
+                    with st.spinner("Проверяю по очереди: нормы, кабинеты, данные…"):
+                        for line in diagnose(school, rules=rules,
+                                             max_seconds=min(40, budget)):
+                            if line:
+                                st.write("• " + line)
             else:
                 st.error("Такого расписания не существует — солвер это доказал. "
                          "Разбираюсь, что именно мешает…")

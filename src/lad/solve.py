@@ -204,6 +204,7 @@ def solve(
     pinned: list[Lesson] | None = None,
     params: dict | None = None,
     hierarchical: bool = False,
+    ignore_rooms: bool = False,
 ) -> SolveResult:
     """Составить расписание.
 
@@ -414,7 +415,7 @@ def solve(
         if kind is not None:
             load_by_kind[kind].append(i)
 
-    for kind, indices in load_by_kind.items():
+    for kind, indices in load_by_kind.items() if not ignore_rooms else []:
         capacity = len(rooms_by_kind.get(kind, []))
         if capacity == 0:
             # Предмет требует кабинета, которого в школе нет. Не молчим:
@@ -429,9 +430,10 @@ def solve(
     for i, item in enumerate(school.load):
         if item.room_id:
             fixed_rooms[item.room_id].append(i)
-    for indices in fixed_rooms.values():
-        for slot in slots:
-            model.Add(sum(x[i, slot] for i in indices) <= 1)
+    if not ignore_rooms:
+        for indices in fixed_rooms.values():
+            for slot in slots:
+                model.Add(sum(x[i, slot] for i in indices) <= 1)
 
     # --- HARD-6: учитель не ставится в свои недоступные слоты
     teacher_by_id = {t.id: t for t in school.teachers}
@@ -1008,6 +1010,14 @@ RULE_SOURCES = {
 }
 
 
+# Человеческие названия типов кабинетов живут в tables.py (там же, где их
+# показывает интерфейс). Импорт локальный: solve.py не должен зависеть от слоя
+# таблиц ради одной подписи в тексте ошибки.
+def _room_kind_names() -> dict:
+    from .tables import KIND_BY_VALUE
+    return KIND_BY_VALUE
+
+
 def diagnose(
     school: School,
     shift: Shift = Shift.FIRST,
@@ -1044,6 +1054,40 @@ def diagnose(
             "даже при полностью снятых нормах, а это обычно вопрос времени, "
             "а не запретов.",
             "Увеличьте время на поиск и запустите составление ещё раз.",
+        ]
+
+    # Кабинетный фонд — вторая частая причина после норм, и на неё почти никогда
+    # не думают. Простой арифметикой её не поймать: по неделе кабинетов хватает,
+    # а нерешаемость возникает в пиковый час, когда все классы учатся сразу
+    # (класс занимается без окон, значит на первом уроке заняты все).
+    # Проверяем экспериментом: снимаем кабинеты, оставляя нормы как есть.
+    # Найдено 25.08.2026 на гимназии в 28 классов: 17 обычных кабинетов
+    # на 28 классов — расписания не существует, и никакое время не помогает.
+    if solve(school, shift, max_seconds, optimize=False, rules=rules,
+             ignore_rooms=True).ok:
+        from collections import Counter
+        have = Counter(room.kind for room in school.rooms)
+        subject_room = {s.id: s.required_room for s in school.subjects}
+        need = Counter()
+        for item in school.load:
+            need[item.room_kind or subject_room.get(item.subject_id)] += item.hours_per_week
+        tight = sorted(need, key=lambda k: -(need[k] / max(1, have.get(k, 0))))
+        titles = _room_kind_names()
+        names = {kind: titles.get(kind.value, kind.value) for kind in need}
+        worst = ", ".join(
+            f"«{names[kind]}» — {have.get(kind, 0)} шт. на {need[kind]} ч"
+            for kind in tight[:3] if kind is not None
+        )
+        return [
+            "Дело в кабинетах, а не в нормах: со снятым ограничением по кабинетам "
+            "расписание находится, а с ним — нет.",
+            f"Всего кабинетов {len(school.rooms)} на {len(school.classes)} классов. "
+            "Класс учится без окон, поэтому на первом уроке заняты все классы сразу — "
+            "и кабинетов нужно столько же, сколько классов, плюс отдельный кабинет "
+            "каждой подгруппе при делении.",
+            f"Самые тесные: {worst}." if worst else "",
+            "Добавьте кабинеты на вкладке «4. Кабинеты» — или уберите деление "
+            "на подгруппы там, где оно не обязательно.",
         ]
 
     # Виновной считается ТОЛЬКО норма, для которой солвер ДОКАЗАЛ невозможность
