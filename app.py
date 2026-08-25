@@ -273,10 +273,15 @@ with st.sidebar:
     st.subheader("Сколько ждать")
     st.caption("Система ищет лучший вариант, пока есть время. Дольше ищет — меньше "
                "окон и ровнее дни. Расписание получится в любом случае.")
+    # Значение по умолчанию — не «быстро попробовать», а «хватит на школу».
+    # Замерено 25.08.2026 на 28 классах и 980 часах: со всеми нормами в жёстком
+    # режиме первое законное расписание находится за 119 секунд. С бюджетом
+    # в полминуты завуч получал бы «решения нет» там, где решение есть.
     budget = st.select_slider(
-        "Время на поиск", options=[30, 60, 120, 300, 600], value=300,
-        format_func=lambda v: {30: "полминуты", 60: "минута", 120: "2 минуты",
-                               300: "5 минут — рекомендуем", 600: "10 минут"}[v],
+        "Время на поиск", options=[60, 120, 300, 600, 900], value=300,
+        format_func=lambda v: {60: "минута — только для маленькой школы",
+                               120: "2 минуты", 300: "5 минут — рекомендуем",
+                               600: "10 минут", 900: "15 минут"}[v],
         label_visibility="collapsed")
 
     weights = PRESETS[preset_name]["weights"]
@@ -867,10 +872,35 @@ with tabs[8]:
         result, elapsed = job.result, job.elapsed
 
         if not result.ok:
-            st.error(f"Решения нет ({result.status}). Разбираюсь, почему…")
-            with st.spinner("Проверяю нормы по одной…"):
-                for line in diagnose(school, rules=rules, max_seconds=min(30, budget)):
-                    st.write(line)
+            # Два разных ответа солвера, которые нельзя валить в один.
+            #   INFEASIBLE — доказано, что расписания не существует. Виноваты
+            #                данные или нормы, и есть смысл разбираться.
+            #   UNKNOWN    — не успел за отведённое время. Расписание, возможно,
+            #                есть; на 28 классах поиск занимает около двух минут.
+            # Раньше оба показывались как «решения нет», и завуч на коротком
+            # бюджете читал разбор про нормы, хотя виновато было время.
+            if result.status == "UNKNOWN":
+                st.warning(
+                    f"За {elapsed:.0f} с законное расписание найти не успели. "
+                    "Это не значит, что его нет: на школе в 28 классов поиск "
+                    "занимает около двух минут, и чем строже нормы, тем дольше. "
+                    "Увеличьте время слева и запустите ещё раз.",
+                    icon=":material/hourglass_empty:")
+                if budget < 900 and st.button("Искать дольше", type="primary",
+                                              icon=":material/more_time:"):
+                    st.session_state.job = SolveJob(school, max_seconds=budget * 2,
+                                                    weights=weights, rules=rules)
+                    st.session_state.job.start()
+                    st.rerun()
+                st.caption("Если и с большим временем не выходит — ослабьте одну "
+                           "из норм на вкладке «Нормы»: там же написано, какая "
+                           "чем обоснована.")
+            else:
+                st.error("Такого расписания не существует — солвер это доказал. "
+                         "Разбираюсь, что именно мешает…")
+                with st.spinner("Проверяю нормы по одной…"):
+                    for line in diagnose(school, rules=rules, max_seconds=min(30, budget)):
+                        st.write(line)
         else:
             # Готовое расписание собирается ОДИН раз и лежит в состоянии сессии.
             # Иначе каждое скачивание файла (а это перезапуск скрипта) пересчитывало
@@ -902,6 +932,12 @@ with tabs[8]:
                 for col, (label, value) in zip(st.columns(4), summary[start:start + 4]):
                     col.metric(label, value)
 
+            # Точечные послабления: норму нельзя было выполнить в конкретном
+            # классе, и система ослабила её ТОЛЬКО там. Завуч должен узнать
+            # об этом от системы, а не от проверяющего.
+            for line in getattr(result, "relaxed", []):
+                st.warning(line, icon=":material/rule:")
+
             if report.violations:
                 with st.expander(f"Нарушения ({len(report.violations)})"):
                     for v in report.violations:
@@ -920,8 +956,29 @@ with tabs[8]:
                                  file_name="raspisanie.html", mime="text/html", width="stretch",
                                  help="Один файл, открывается двойным кликом, читается с телефона.")
 
-            if st.button("Составить заново", icon=":material/refresh:"):
-                for stale in ("job", "result_of", "result_view"):
+            st.markdown("**Что-то не устраивает?**")
+            st.caption("Пересобрать всё — значит переставить и то, что уже подходит. "
+                       "Выберите классы, которые нужно переделать: остальные уроки "
+                       "останутся ровно там, где стоят.")
+            redo = st.multiselect(
+                "Классы для пересборки", [c.name for c in school.classes],
+                key="redo_classes", label_visibility="collapsed",
+                placeholder="Какие классы переделать…")
+
+            again, fresh_start = st.columns(2)
+            if redo and again.button("Пересобрать выбранное", type="primary",
+                                     width="stretch", icon=":material/autorenew:"):
+                keep = [lesson for lesson in result.lessons
+                        if not (set(school.group(lesson.group_id).class_ids) & set(redo))]
+                st.session_state.job = SolveJob(school, max_seconds=budget,
+                                                weights=weights, rules=rules, pinned=keep)
+                st.session_state.job.start()
+                for stale in ("result_of", "result_view"):
+                    st.session_state.pop(stale, None)
+                st.rerun()
+            if fresh_start.button("Составить с нуля", width="stretch",
+                                  icon=":material/refresh:"):
+                for stale in ("job", "result_of", "result_view", "redo_classes"):
                     st.session_state.pop(stale, None)
                 st.rerun()
 
@@ -929,3 +986,25 @@ with tabs[8]:
             # стили, и в общем документе они бы протекли на всё приложение.
             # (st.components.v1.html объявлен устаревшим.)
             st.iframe(OUT_HTML, height=700)
+
+
+# ------------------------------------------------------------------ автосохранение
+# Завуч вводит школу часами. Ручная кнопка «Сохранить» этого не выдерживает:
+# закрытая вкладка, перезапуск, случайное обновление страницы — и работа
+# пропала. Streamlit выполняет скрипт заново при каждом действии, поэтому
+# самое надёжное место для записи — его конец. Пишем только при изменениях,
+# чтобы не трогать диск на каждый клик.
+
+def _snapshot() -> str:
+    parts = [name + df.to_json() for name, df in sorted(tables.items())]
+    return json.dumps([parts, settings, st.session_state.wishes],
+                      ensure_ascii=False, sort_keys=True, default=str)
+
+
+try:
+    fresh = _snapshot()
+    if fresh != st.session_state.get("saved_snapshot"):
+        save_tables(tables, settings, st.session_state.wishes)
+        st.session_state.saved_snapshot = fresh
+except Exception as error:  # noqa: BLE001 — потеря автосохранения не должна ронять экран
+    st.toast(f"Не удалось сохранить данные: {error}", icon=":material/error:")

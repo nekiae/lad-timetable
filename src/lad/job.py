@@ -23,11 +23,13 @@ class SolveJob:
     """Один запуск составления: поток, история снимков, просьба остановиться."""
 
     def __init__(self, school: School, max_seconds: float,
-                 weights: Weights | None = None, rules: Rules | None = None):
+                 weights: Weights | None = None, rules: Rules | None = None,
+                 pinned: list | None = None):
         self.school = school
         self.max_seconds = max_seconds
         self.weights = weights
         self.rules = rules
+        self.pinned = pinned
 
         self.history: list[Progress] = []
         self.result: SolveResult | None = None
@@ -99,6 +101,7 @@ class SolveJob:
                 rules=self.rules,
                 on_progress=self.history.append,
                 should_stop=lambda: self.stop_requested,
+                pinned=self.pinned,
             )
         except BaseException as error:  # noqa: BLE001 — показываем завучу как есть
             self.error = error

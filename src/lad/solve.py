@@ -22,6 +22,7 @@
 """
 
 from collections import defaultdict
+import os
 import time
 from dataclasses import dataclass, field
 
@@ -96,7 +97,7 @@ class Rules:
     hard_subject_edges: str = "hard"  # п. 94: трудный предмет на краю дня ≤ 1 раза
     peak_days: str = "soft"  # п. 94: максимум нагрузки во вторник/среду/пятницу
     difficulty_balance: str = "soft"  # п. 88.2: равномерность по трудности
-    even_days: str = "hard"  # ровное число уроков по дням (не норма, а качество)
+    even_days: str = "soft"  # ровное число уроков по дням (не норма, а качество)
     teacher_wishes: str = "soft"  # пожелания учителей (не норма, а договорённость)
 
     def on(self, name: str) -> bool:
@@ -108,12 +109,17 @@ class Rules:
 
 class SolveResult:
     def __init__(
-        self, status: str, lessons: list[Lesson], wall_time: float, penalty: int | None = None
+        self, status: str, lessons: list[Lesson], wall_time: float, penalty: int | None = None,
+        relaxed: list[str] | None = None,
     ):
         self.status = status
         self.lessons = lessons
         self.wall_time = wall_time
         self.penalty = penalty
+        # Нормы, которые пришлось ослабить точечно — по одному классу, а не
+        # по всей школе. Завуч обязан знать, где именно и почему: это те места,
+        # за которые он отвечает перед проверкой (docs/domain.md §4.8).
+        self.relaxed = relaxed or []
 
     @property
     def ok(self) -> bool:
@@ -195,6 +201,9 @@ def solve(
     rules: Rules | None = None,
     on_progress=None,
     should_stop=None,
+    pinned: list[Lesson] | None = None,
+    params: dict | None = None,
+    hierarchical: bool = False,
 ) -> SolveResult:
     """Составить расписание.
 
@@ -202,6 +211,12 @@ def solve(
     `should_stop` спрашивается там же — если вернёт True, поиск прекращается
     и возвращается лучшее найденное. Оба нужны интерфейсу: составление идёт
     минутами, и завуч должен видеть, что происходит, и мочь прервать.
+
+    `pinned` — уроки, которые обязаны остаться на своих местах. Первый вопрос
+    завуча к готовому расписанию всегда один: «вот здесь надо подвинуть».
+    Пересобирать всё заново нельзя — вместе с неудобным уроком переедет
+    и то, что его устраивало. Поэтому лишнее закрепляется, а пересобирается
+    только спорная часть.
     """
     model = cp_model.CpModel()
     rules = rules or Rules()
@@ -218,9 +233,27 @@ def solve(
         for slot in slots:
             x[i, slot] = model.NewBoolVar(f"x_{i}_{slot}")
 
+    x_slots = set(slots)
+
     # --- HARD-4: все часы из нагрузки выданы ровно в нужном количестве
     for i, item in enumerate(school.load):
         model.Add(sum(x[i, s] for s in slots) == item.hours_per_week)
+
+    # --- закреплённые уроки: стоят там, где стояли, и не обсуждаются.
+    # Строка нагрузки даёт несколько уроков в неделю, и они взаимозаменяемы,
+    # поэтому достаточно потребовать «эта строка занимает этот слот».
+    if pinned:
+        by_key: dict[tuple[str, str, str], list[int]] = defaultdict(list)
+        for i, item in enumerate(school.load):
+            by_key[item.group_id, item.subject_id, item.teacher_id].append(i)
+        for lesson in pinned:
+            indices = by_key.get(
+                (lesson.group_id, lesson.subject_id, lesson.teacher_id))
+            if not indices:
+                continue
+            slot = lesson.slot if lesson.slot in x_slots else None
+            if slot is not None:
+                model.Add(x[indices[0], slot] == 1)
 
     # --- HARD-4b: один и тот же предмет не стоит у группы дважды в один день
     # (иначе солвер честно поставит 5 математик подряд в понедельник).
@@ -412,6 +445,7 @@ def solve(
     w = weights or Weights()
     days = sorted({s.day for s in slots})
     penalties = []  # (переменная, вес)
+    relaxed: list[str] = []  # нормы, ослабленные точечно — по классу, а не по школе
 
     # --- SOFT-1 и SOFT-3: окна у учителей и число дней присутствия.
     # Окно считаем так: у учителя в дне есть первый урок и последний. Между ними
@@ -489,17 +523,34 @@ def solve(
         high = min(high, school.periods_per_day)
 
         if total and rules.on("even_days") and low <= high:
+            # Жёсткая граница шире идеала на урок в каждую сторону, а к идеалу
+            # тянет штраф. Идеальный коридор «ровно 5–6» оказался неподъёмным:
+            # на 28 классах поиск ЛЮБОГО расписания стал нестабильным — то 10
+            # секунд, то не находит за 45 вовсе (замерено 25.08.2026, три прогона
+            # из трёх разошлись). Допуск в один урок возвращает солверу свободу,
+            # а штраф всё равно приводит дни к 5–6: разброс по школе остаётся
+            # тем же, но результат появляется всегда.
+            hard_low = max(1, low - 1)
+            hard_high = min(school.periods_per_day, high + 1)
             for count in per_day:
                 if rules.is_hard("even_days"):
+                    # «Жёстко» — идеальный коридор без допуска: дни выходят
+                    # ровно 5–6 при 28 часах. Ровнее не бывает, но модель
+                    # становится тяжёлой и расписание может не найтись вовсе.
                     model.Add(count >= low)
                     model.Add(count <= high)
-                else:
-                    short = model.NewIntVar(0, school.periods_per_day, f"short_{count.Name()}")
-                    over = model.NewIntVar(0, school.periods_per_day, f"over_{count.Name()}")
-                    model.Add(short >= low - count)
-                    model.Add(over >= count - high)
-                    penalties.append((short, w.class_imbalance * 3))
-                    penalties.append((over, w.class_imbalance * 3))
+                elif rules.on("even_days"):
+                    model.Add(count >= hard_low)
+                    model.Add(count <= hard_high)
+                short = model.NewIntVar(0, school.periods_per_day, f"short_{count.Name()}")
+                over = model.NewIntVar(0, school.periods_per_day, f"over_{count.Name()}")
+                model.Add(short >= low - count)
+                model.Add(over >= count - high)
+                # Вес больше обычного разброса: отклонение от идеального
+                # коридора — это ровно тот день из четырёх уроков, ради
+                # которого коридор и вводился.
+                penalties.append((short, w.class_imbalance * 8))
+                penalties.append((over, w.class_imbalance * 8))
 
         day_max = model.NewIntVar(0, school.periods_per_day, f"max_{class_id}")
         day_min = model.NewIntVar(0, school.periods_per_day, f"min_{class_id}")
@@ -601,15 +652,34 @@ def solve(
                 hard_indices[class_id, item.subject_id].append(i)
 
     if rules.on("pe_two_days") and norms.pe_no_two_days_in_row:
+        # Норма применяется ПО КЛАССАМ, а не одним переключателем на всю школу.
+        # Причина из реальных данных: физкультура не может стоять два дня подряд,
+        # значит при пятидневке в неделю помещается максимум три занятия
+        # (пн-ср-пт). Класс, где физкультуры четыре часа, эту норму выполнить
+        # не может физически. Раньше из-за одного такого класса завуч был обязан
+        # ослабить норму целиком — и её начинали нарушать все 28 классов, которым
+        # она была вполне по силам. Теперь послабление получает только тот класс,
+        # которому норма не по силам, а остальным она остаётся запретом.
+        room_for_pe = (len(days) + 1) // 2  # сколько занятий влезает без соседних дней
         for class_id, indices in pe_indices.items():
             pe_day = {}
             for day in days:
                 var = model.NewBoolVar(f"pe_{class_id}_{day}")
                 model.AddMaxEquality(var, [x[i, s] for i in indices for s in slots if s.day == day])
                 pe_day[day] = var
+            hours = sum(school.load[i].hours_per_week for i in indices)
+            mode = rules.pe_two_days
+            if mode == "hard" and hours > room_for_pe:
+                mode = "soft"
+                relaxed.append(
+                    f"{class_id}: физкультуры {hours} ч в неделю, а без двух дней подряд "
+                    f"их помещается {room_for_pe} (п. 94 ССЭТ № 525). Для этого класса "
+                    f"норма посчитана мягко — в расписании она будет нарушена. "
+                    f"Обычный выход: лишний час перенести в шестой школьный день."
+                )
             for day, nxt in zip(days, days[1:]):
                 if nxt == day + 1:  # именно соседние дни недели
-                    limit(rules.pe_two_days, [pe_day[day], pe_day[nxt]], 1, w.pe_rule,
+                    limit(mode, [pe_day[day], pe_day[nxt]], 1, w.pe_rule,
                           f"pe2_{class_id}_{day}")
 
     if rules.on("pe_edges") and norms.pe_max_first_or_last is not None:
@@ -694,7 +764,28 @@ def solve(
                     penalties.append((excess, w.peak_day))
 
     solver = cp_model.CpSolver()
-    solver.parameters.num_workers = 8
+    # Столько потоков, сколько есть ядер (в разумных пределах): поиск идёт
+    # минутами, и это единственный бесплатный способ его ускорить.
+    solver.parameters.num_workers = max(8, min(16, os.cpu_count() or 8))
+    # Активнее использовать линейную релаксацию. Половина нашей модели — суммы
+    # («не больше стольких часов в дне», «столько-то окон»), и приближённое
+    # решение в дробях служит солверу ориентиром, отсекая безнадёжные ветки.
+    # Замерено 25.08.2026 на 28 классах, три минуты на конфигурацию:
+    #   как было              — штраф 7467, окон у учителей 236
+    #   linearization_level=2 — штраф 6947, окон у учителей 143   ← взято
+    #   symmetry_level=4      — штраф 7321 (классы различаются учителями,
+    #                           переставлять их местами нечего)
+    #   probing_level=2       — штраф 7985 (хуже: анализ вместо поиска)
+    #   interleave+lns        — решения не нашёл вовсе
+    solver.parameters.linearization_level = 2
+    # …но только для ОПТИМИЗАЦИИ. Поиску первого расписания линейная релаксация
+    # не помогает, а мешает: замерено 25.08.2026 — с ней первая фаза заняла
+    # 48 секунд вместо четырёх. Перед ней уровень снижается, после — возвращается.
+    # Точка для настройки поиска. Значения подбираются замерами, а не на глаз:
+    # на каждой модели они работают по-разному, и «умные» параметры вполне
+    # могут сделать хуже.
+    for name, value in (params or {}).items():
+        setattr(solver.parameters, name, value)
     fallback: list[Lesson] = []
 
     if optimize and penalties:
@@ -710,12 +801,26 @@ def solve(
         # ВСЕГДА есть расписание: хуже по метрикам, если времени не хватило,
         # но валидное. Для завуча это разница между «вот, правьте руками»
         # и «система ничего не выдала».
-        warmup = min(60.0, max(10.0, max_seconds * 0.25))
+        # Первой фазе отдаём ВЕСЬ бюджет как потолок, а не четверть: модель без
+        # целевой функции возвращается сразу, как только находит решение,
+        # поэтому лишнего времени она не съест. Фиксированные 10 секунд чуть
+        # не стоили работоспособности: коридор ровных дней сделал поиск дольше
+        # (9 с вместо 2), и на 30-секундном бюджете система снова начала
+        # отвечать «решения нет» — при том что решение находится.
+        warmup = max_seconds
         if on_progress:
             on_progress(Progress(stage="search", seconds=0.0, budget=max_seconds,
                                  solutions=0))
         solver.parameters.max_time_in_seconds = warmup
+        # Останавливаемся на ПЕРВОМ найденном расписании. Без этого солвер
+        # продолжает работу и на 45-секундном бюджете то укладывался за 9 секунд,
+        # то не возвращал ничего вовсе — а нам на этом шаге нужно только одно:
+        # любое законное расписание, чтобы было что улучшать и что отдать.
+        solver.parameters.stop_after_first_solution = True
+        solver.parameters.linearization_level = 0
         first = solver.Solve(model)
+        solver.parameters.stop_after_first_solution = False
+        solver.parameters.linearization_level = 2
         spent = solver.WallTime()
         if first in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             for key, var in x.items():
@@ -741,9 +846,63 @@ def solve(
                 for slot in slots if solver.Value(x[i, slot])
             ]
 
-        model.Minimize(sum(var * weight for var, weight in penalties))
-        solver.parameters.max_time_in_seconds = max(5.0, max_seconds - spent)
+        objective = sum(var * weight for var, weight in penalties)
         reporter = _Reporter(dict(trackers), max_seconds, on_progress, should_stop, started_at)
+        gap_vars = trackers.get("Окна у учителей") or []
+
+        if hierarchical and gap_vars:
+            # ДВА КРИТЕРИЯ ПО ОЧЕРЕДИ, а не одной суммой.
+            #
+            # ⚠️ ВЫКЛЮЧЕНО ПО УМОЛЧАНИЮ. Замерено 25.08.2026, по два прогона
+            # каждого режима на 28 классах (окон у учителей, меньше — лучше):
+            #     одна сумма — 92 и 86
+            #     по этапам  — 89 и 105
+            # Выигрыша нет, разброс между прогонами больше разницы между
+            # режимами, и этапы стабильно вылезают за отведённое время.
+            # Код оставлен: на другой школе с другим соотношением ограничений
+            # может выйти иначе — но включать это надо с замером, а не на веру.
+            #
+            # Взвешенная сумма заставляет солвер размазывать усилия: он одинаково
+            # готов убрать окно у учителя и подровнять день у класса, хотя окно —
+            # это час человека в школе без дела, а неровный день переживаем.
+            # Поэтому сперва отдельно выжимаем окна, а потом фиксируем достигнутое
+            # с небольшим допуском и на остаток времени доводим всё остальное.
+            first_share = 0.45
+            left = max_seconds - (time.monotonic() - started_at)
+            solver.parameters.max_time_in_seconds = max(5.0, left * first_share)
+            model.Minimize(sum(gap_vars))
+            stage = solver.Solve(model, reporter)
+            if stage in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+                best_gaps = sum(int(solver.Value(v)) for v in gap_vars)
+                # Старые подсказки сначала СНЯТЬ. Повторный AddHint для той же
+                # переменной добавляет вторую запись, и модель становится
+                # невалидной: замерено 25.08.2026 — третий этап возвращал
+                # MODEL_INVALID за ноль секунд, то есть полная оптимизация
+                # не выполнялась вовсе, а наружу уходил результат первого этапа.
+                model.ClearHints()
+                for key, var in x.items():
+                    model.AddHint(var, solver.Value(var))
+                # Жёстко фиксировать достигнутое НЕЛЬЗЯ. Замерено 25.08.2026:
+                # с ограничением «окон не больше найденного +15%» второй этап
+                # доказывал оптимальность в этой клетке и выходил на 145-й
+                # секунде из 300 — половина бюджета пропадала, а разброс дней
+                # и трудность выходили хуже, чем у обычной суммы.
+                # Поэтому первый этап работает как разгон: он даёт хорошую
+                # стартовую точку по главному критерию, дальше поиск свободен.
+                fallback = [
+                    Lesson(slot=slot, group_id=item.group_id, subject_id=item.subject_id,
+                           teacher_id=item.teacher_id, room_id=item.room_id, kind=item.kind)
+                    for i, item in enumerate(school.load)
+                    for slot in slots if solver.Value(x[i, slot])
+                ]
+            model.ClearObjective()
+
+        model.Minimize(objective)
+        # Остаток бюджета — по реальным часам. `solver.WallTime()` показывает
+        # длительность ПОСЛЕДНЕГО вызова, а не всё потраченное время, и второй
+        # этап из-за этого получал пять секунд вместо половины бюджета.
+        solver.parameters.max_time_in_seconds = max(
+            5.0, max_seconds - (time.monotonic() - started_at))
         status = solver.Solve(model, reporter)
         if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE) and fallback:
             # Улучшить не успели — отдаём законное расписание из первой фазы.
@@ -773,7 +932,7 @@ def solve(
                     )
 
     penalty = int(solver.ObjectiveValue()) if (optimize and penalties and lessons) else None
-    return SolveResult(solver.StatusName(status), lessons, solver.WallTime(), penalty)
+    return SolveResult(solver.StatusName(status), lessons, solver.WallTime(), penalty, relaxed)
 
 
 def assign_rooms(school: School, lessons: list[Lesson]) -> list[Lesson]:
@@ -842,7 +1001,9 @@ RULE_SOURCES = {
     "hard_subject_edges": "п. 94 ССЭТ № 525",
     "peak_days": "п. 94 ССЭТ № 525",
     "difficulty_balance": "п. 88.2 СанПиН № 206",
-    "even_days": "не норма, а требование к качеству: без дня из двух уроков рядом с днём из восьми",
+    "even_days": "не норма, а качество расписания. «Мягко» — коридор с допуском "
+                  "в один урок, расписание находится всегда. «Жёстко» — идеальная "
+                  "ровность, но поиск тяжелеет и решения может не быть",
     "teacher_wishes": "не норма, а договорённости внутри школы",
 }
 
@@ -868,18 +1029,44 @@ def diagnose(
     active = [name for name in RULE_TITLES if rules.is_hard(name)]
 
     bare = Rules(**{name: "off" for name in RULE_TITLES})
-    if not solve(school, shift, max_seconds, optimize=False, rules=bare).ok:
+    without = solve(school, shift, max_seconds, optimize=False, rules=bare)
+    if without.status == "INFEASIBLE":
         return [
             "Дело не в санитарных нормах: расписание не складывается даже без них.",
             "Обычно это значит, что часов в нагрузке больше, чем уроков в сетке, "
             "или у кого-то из учителей слишком много недоступных слотов.",
         ]
+    if not without.ok:
+        # Даже без единой нормы не успели — значит виновата не норма, а время.
+        # Обвинять здесь что-либо нельзя: мы просто ничего не выяснили.
+        return [
+            "За отведённое время причину выяснить не удалось: расписание не нашлось "
+            "даже при полностью снятых нормах, а это обычно вопрос времени, "
+            "а не запретов.",
+            "Увеличьте время на поиск и запустите составление ещё раз.",
+        ]
 
-    guilty = []
+    # Виновной считается ТОЛЬКО норма, для которой солвер ДОКАЗАЛ невозможность
+    # (INFEASIBLE). Ответ UNKNOWN значит «не успел за отведённое время» — и если
+    # засчитывать его как вину, разбор начнёт оговаривать нормы, которые на самом
+    # деле выполнимы: на 28 классах поиск с жёсткими нормами занимает под две
+    # минуты, а на каждую пробу здесь отводятся секунды.
+    guilty, unclear = [], []
     for name in active:
         trial = Rules(**{n: ("hard" if n == name else "off") for n in RULE_TITLES})
-        if not solve(school, shift, max_seconds, optimize=False, rules=trial).ok:
+        outcome = solve(school, shift, max_seconds, optimize=False, rules=trial)
+        if outcome.status == "INFEASIBLE":
             guilty.append(name)
+        elif not outcome.ok:
+            unclear.append(name)
+
+    if not guilty and unclear:
+        return [
+            "Однозначной причины нет: за отведённое на разбор время не удалось "
+            "проверить требования: " + ", ".join(RULE_TITLES[n] for n in unclear) + ".",
+            "Скорее всего дело во времени, а не в нормах. Увеличьте время "
+            "на поиск и попробуйте ещё раз.",
+        ]
 
     if not guilty:
         return [
