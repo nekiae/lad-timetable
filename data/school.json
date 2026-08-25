@@ -1,11 +1,4 @@
 {
-  "settings": {
-    "name": "Средняя школа № 3 (районный центр)",
-    "periods": 8,
-    "days": 5,
-    "sixth_day": true,
-    "intro_seen": true
-  },
   "tables": {
     "classes": [
       {
@@ -2980,5 +2973,17 @@
       }
     ]
   },
-  "wishes": {}
+  "settings": {
+    "name": "Средняя школа № 3 (районный центр)",
+    "periods": 8,
+    "days": 5,
+    "sixth_day": true,
+    "intro_seen": true
+  },
+  "wishes": {
+    "Адамович А. А.": {
+      "hard": [],
+      "soft": []
+    }
+  }
 }

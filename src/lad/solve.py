@@ -24,6 +24,7 @@
 from collections import defaultdict
 import os
 import time
+from pathlib import Path
 from dataclasses import dataclass, field
 
 from ortools.sat.python import cp_model
@@ -190,6 +191,64 @@ class _Reporter(cp_model.CpSolverSolutionCallback):
             ))
         if self._should_stop and self._should_stop():
             self.StopSearch()
+
+
+def available_cpus() -> int:
+    """Сколько процессорных ядер реально досталось процессу.
+
+    `os.cpu_count()` отвечает на другой вопрос — сколько ядер у ЖЕЛЕЗА. В
+    контейнере это ядра хоста, а не выделенная квота, и разница огромная:
+    на бесплатном Streamlit Cloud процесс видит восемь ядер, а получает
+    доли одного.
+
+    ⚠️ Ограничивать число потоков этой цифрой НЕЛЬЗЯ, и это неочевидно.
+    Замерено 26.08.2026 на районной школе (14 классов), поиск первого решения:
+
+        1 поток  → не нашёл за 120 с      = 120 процессорных секунд впустую
+        2 потока → нашёл за 12,8 с        =  26 процессорных секунд
+        4 потока → нашёл за 3,8 с         =  15 процессорных секунд
+
+    CP-SAT держит в потоках РАЗНЫЕ стратегии поиска и берёт ту, что сработала
+    первой. Одному потоку достаётся одна стратегия, и он может не найти ничего.
+    Поэтому лишние потоки на слабой машине не разоряют, а ЭКОНОМЯТ процессорное
+    время: решение находится настолько раньше, что суммарный расход падает.
+    Отсюда `max(4, ...)` в вызове: четыре стратегии минимум, сколько бы ядер
+    ни было.
+
+    Тогда зачем считать квоту вообще — чтобы не заводить шестнадцать потоков
+    там, где их обслуживать нечем: сверх нескольких штук выигрыш от новых
+    стратегий сходит на нет, а переключение контекста остаётся.
+
+    Порядок проверок — от самого точного к самому грубому:
+      1. cgroup v2 (`cpu.max`) и v1 (`cpu.cfs_quota_us`) — квота контейнера,
+         единственный источник, знающий про ограничение;
+      2. `sched_getaffinity` — маска ядер, на которых процессу разрешено идти;
+      3. `os.cpu_count()` — ядра железа, последняя надежда.
+    """
+    limits = []
+
+    # --- квота cgroup: «сколько микросекунд CPU за период» → доля ядра
+    try:  # cgroup v2: строка вида "200000 100000" либо "max 100000"
+        quota, period = Path("/sys/fs/cgroup/cpu.max").read_text().split()
+        if quota != "max":
+            limits.append(int(quota) / int(period))
+    except (OSError, ValueError):
+        pass
+    try:  # cgroup v1: квота и период лежат в разных файлах
+        quota = int(Path("/sys/fs/cgroup/cpu/cpu.cfs_quota_us").read_text())
+        period = int(Path("/sys/fs/cgroup/cpu/cpu.cfs_period_us").read_text())
+        if quota > 0 and period > 0:
+            limits.append(quota / period)
+    except (OSError, ValueError):
+        pass
+
+    if hasattr(os, "sched_getaffinity"):  # на macOS его нет
+        limits.append(len(os.sched_getaffinity(0)))
+    limits.append(os.cpu_count() or 1)
+
+    # Дробную квоту округляем ВНИЗ: пол-ядра — это один поток, а не два.
+    # И не меньше одного, иначе солверу нечем работать.
+    return max(1, int(min(limits)))
 
 
 def solve(
@@ -766,9 +825,8 @@ def solve(
                     penalties.append((excess, w.peak_day))
 
     solver = cp_model.CpSolver()
-    # Столько потоков, сколько есть ядер (в разумных пределах): поиск идёт
-    # минутами, и это единственный бесплатный способ его ускорить.
-    solver.parameters.num_workers = max(8, min(16, os.cpu_count() or 8))
+    # Не меньше четырёх потоков, даже если ядер меньше, — см. available_cpus().
+    solver.parameters.num_workers = max(4, min(16, available_cpus()))
     # Активнее использовать линейную релаксацию. Половина нашей модели — суммы
     # («не больше стольких часов в дне», «столько-то окон»), и приближённое
     # решение в дробях служит солверу ориентиром, отсекая безнадёжные ветки.
