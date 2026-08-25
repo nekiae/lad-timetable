@@ -87,6 +87,13 @@ def _assign_teachers(load: pd.DataFrame, subjects: pd.DataFrame) -> pd.DataFrame
         rows = load[load["предмет"] == subject]
         hours = int(rows["часов"].sum())
         count = max(1, math.ceil(hours / HOURS_PER_TEACHER))
+        # Делимому предмету нужно не меньше учителей, чем подгрупп в классе:
+        # подгруппы занимаются ОДНОВРЕМЕННО, и один человек их не проведёт.
+        # На малой школе часов мало, счёт по ставке давал одного учителя —
+        # и данные выходили заведомо нерешаемыми.
+        parts = max((len({str(v).strip() for v in group["подгруппа"] if str(v).strip()})
+                     for _, group in rows.groupby("класс")), default=0)
+        count = max(count, parts)
         names = total_names[used:used + count]
         used += count
         teachers_of[subject] = names
@@ -109,6 +116,62 @@ def _assign_teachers(load: pd.DataFrame, subjects: pd.DataFrame) -> pd.DataFrame
     return load, teachers
 
 
+def _merge_small_loads(load: pd.DataFrame, teachers: pd.DataFrame,
+                       target: int = HOURS_PER_TEACHER) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Свести учителей с малой нагрузкой в многопредметников.
+
+    Это не упрощение, а реальность малой школы. При семи классах на всю школу
+    география даёт 7 часов в неделю, химия — 6: отдельного учителя на такой
+    предмет не берут, их ведёт один человек. Для расписания это принципиально
+    другой человек: занятость у него складывается по ВСЕМ его предметам, и в
+    два места одновременно он всё так же не встанет. Именно здесь модель
+    легче всего сломать, поэтому такую школу и надо проверять отдельно.
+
+    Предметы соединяются по убыванию часов, пока сумма не подойдёт к ставке.
+    Это модель, а не отчётность: в жизни сочетания диктует диплом
+    (физика с математикой, история с обществоведением), а не арифметика.
+    """
+    load = load.copy()
+    hours = load.groupby("учитель")["часов"].sum().sort_values(ascending=False)
+    small = [(name, int(total)) for name, total in hours.items() if total < target * 0.6]
+
+    # Кого с кем соединять НЕЛЬЗЯ: тех, кто ведёт разные подгруппы одного
+    # класса по одному предмету. Они работают в один и тот же час, и слить
+    # их в одного человека — значит получить заведомо невыполнимые данные.
+    # Именно так и вышло на первом прогоне сельской школы: труд у мальчиков
+    # и у девочек достался одному Царуку, потому что у обоих было мало часов.
+    parallel_pairs: set[frozenset] = set()
+    for _, group in load.groupby(["предмет", "класс"]):
+        parts = {str(v).strip() for v in group["подгруппа"] if str(v).strip()}
+        if len(parts) < 2:
+            continue
+        who = sorted({str(v) for v in group["учитель"] if str(v).strip()})
+        for a in range(len(who)):
+            for b in range(a + 1, len(who)):
+                parallel_pairs.add(frozenset({who[a], who[b]}))
+
+    def clashes(candidate: str, group: list[str]) -> bool:
+        return any(frozenset({candidate, member}) in parallel_pairs for member in group)
+
+    renames: dict[str, str] = {}
+    bucket: list[str] = []
+    filled = 0
+    for name, total in small:
+        if bucket and (filled + total > target or clashes(name, bucket)):
+            for old_name in bucket[1:]:
+                renames[old_name] = bucket[0]
+            bucket, filled = [], 0
+        bucket.append(name)
+        filled += total
+    for old_name in bucket[1:]:
+        renames[old_name] = bucket[0]
+
+    if renames:
+        load["учитель"] = load["учитель"].replace(renames)
+        teachers = teachers[~teachers["ФИО"].isin(renames)].reset_index(drop=True)
+    return load, teachers
+
+
 def _rooms_for(load: pd.DataFrame, subjects: pd.DataFrame, periods: int, days: int,
                reserve: float = 1.25) -> pd.DataFrame:
     """Кабинетный фонд под конкретную нагрузку, а не «на глаз».
@@ -126,13 +189,44 @@ def _rooms_for(load: pd.DataFrame, subjects: pd.DataFrame, periods: int, days: i
     """
     pe_days = math.ceil(days / 2)  # понедельник, среда, пятница
     kind_of = {str(r["предмет"]): str(r["кабинет"]) for _, r in subjects.iterrows()}
+
+    def room_kind(row) -> str:
+        """Тип кабинета для строки нагрузки.
+
+        Кабинет, заданный прямо в строке (подгруппы труда расходятся в разные
+        мастерские), важнее типа, заданного предметом. Пустое значение здесь —
+        это NONE_CHOICE «—», а не пустая строка: проверять надо именно его,
+        иначе прочерк принимается за осмысленный выбор.
+        """
+        direct = str(row.get("кабинет") or "").strip()
+        if direct in ROOM_KINDS and direct != NONE_CHOICE:
+            return direct
+        return kind_of.get(str(row["предмет"]), "обычный")
+
     hours: dict[str, int] = {}
     for _, row in load.iterrows():
-        # кабинет, заданный прямо в строке нагрузки (подгруппы труда), важнее
-        direct = str(row.get("кабинет") or "").strip()
-        kind = direct if direct in ROOM_KINDS and direct != NONE_CHOICE \
-            else kind_of.get(str(row["предмет"]), "обычный")
-        hours[kind] = hours.get(kind, 0) + int(row["часов"])
+        hours[room_kind(row)] = hours.get(room_kind(row), 0) + int(row["часов"])
+
+    # Сколько подгрупп одновременно просится в кабинет каждого типа. Деление
+    # на подгруппы идёт СИНХРОННО (HARD-9), поэтому информатика в две подгруппы
+    # требует двух компьютерных кабинетов физически — сколько бы часов ни было
+    # в неделю. Расчёт «по часам» этого не видит: часов мало, а кабинет нужен
+    # второй. В малой школе на 7 классов это и вскрылось.
+    parallel_need: dict[str, int] = {}
+    for _, group in load.groupby(["предмет", "класс"]):
+        parts = {str(v).strip() for v in group.get("подгруппа", []) if str(v).strip()}
+        if len(parts) < 2:
+            continue
+        # Подгруппы, расходящиеся по РАЗНЫМ типам кабинетов (труд: мастерская
+        # и кабинет обслуживающего труда), требуют по одному кабинету каждого
+        # типа. Подгруппы одного типа (информатика) — по одному на каждую.
+        need_here: dict[str, int] = {}
+        for _, row in group.iterrows():
+            kind = room_kind(row)
+            if kind != "обычный":
+                need_here[kind] = need_here.get(kind, 0) + 1
+        for kind, count in need_here.items():
+            parallel_need[kind] = max(parallel_need.get(kind, 0), count)
 
     rows, number = [], 101
     for kind, need in sorted(hours.items()):
@@ -140,6 +234,7 @@ def _rooms_for(load: pd.DataFrame, subjects: pd.DataFrame, periods: int, days: i
             count = max(1, math.ceil(need / (periods * pe_days) * 1.05))
         else:
             count = max(1, math.ceil(need / (periods * days) * reserve))
+        count = max(count, parallel_need.get(kind, 0))
         for _ in range(count):
             label = str(number) if kind == "обычный" else f"{kind.capitalize()} {number}"
             rows.append({"кабинет": label, "тип": kind, "мест": 30})
@@ -147,10 +242,25 @@ def _rooms_for(load: pd.DataFrame, subjects: pd.DataFrame, periods: int, days: i
     return pd.DataFrame(rows)
 
 
-def build(path: Path | str = "data/school_big.json", periods: int = 8, days: int = 5) -> dict:
-    """Собрать данные школы и записать их в файл рабочего места."""
-    counts = {p: CLASSES_PER_PARALLEL for p in range(5, 12)}
-    sizes = {p: CLASS_SIZE for p in range(5, 12)}
+def build(path: Path | str = "data/school_big.json", periods: int = 8, days: int = 5,
+          per_parallel: int = CLASSES_PER_PARALLEL, size: int = CLASS_SIZE,
+          name: str = "Средняя школа № 1 (условная городская)",
+          multi_subject: bool = False, reserve: float = 1.25,
+          method_days: int = 0, profiles_on: bool = True) -> dict:
+    """Собрать данные школы и записать их в файл рабочего места.
+
+    Параметры существуют, чтобы проверять систему на РАЗНЫХ школах, а не на
+    одной. Размер, теснота сетки, кабинетный фонд и совмещение предметов
+    меняют задачу качественно, а не количественно:
+      • `per_parallel`  — сколько классов в параллели (село: 1, город: 4);
+      • `periods`       — высота сетки; 7 вместо 8 убирает запас и делает
+                          расписание по-настоящему тесным;
+      • `multi_subject` — учителя-многопредметники (малая школа);
+      • `reserve`       — запас кабинетного фонда; 1.0 значит «впритык»;
+      • `method_days`   — скольким учителям дать день без уроков.
+    """
+    counts = {p: per_parallel for p in range(5, 12)}
+    sizes = {p: size for p in range(5, 12)}
     classes = generate_classes(counts, sizes)
 
     subjects = generate_subjects(parallels_of(classes), load_plan())
@@ -162,17 +272,28 @@ def build(path: Path | str = "data/school_big.json", periods: int = 8, days: int
                 if not k.startswith("_")}
     plan_profiles = list(profiles)
     applied = []
-    for n, class_name in enumerate([c for c in classes["класс"] if c.startswith(("10", "11"))]):
-        profile = plan_profiles[n % len(plan_profiles)]
-        load, _ = apply_profile(load, class_name, profiles[profile])
-        applied.append(f"{class_name} — {profile}")
+    if profiles_on:
+        for n, class_name in enumerate(
+                [c for c in classes["класс"] if c.startswith(("10", "11"))]):
+            profile = plan_profiles[n % len(plan_profiles)]
+            load, _ = apply_profile(load, class_name, profiles[profile])
+            applied.append(f"{class_name} — {profile}")
 
     load, teachers = _assign_teachers(load, subjects)
-    rooms = _rooms_for(load, subjects, periods=periods, days=days)
+    if multi_subject:
+        load, teachers = _merge_small_loads(load, teachers)
+    # Методический день — реальная практика: у учителя есть день без уроков.
+    # Для солвера это жёсткий запрет на пять слотов подряд, и на тесной сетке
+    # он ощутимо усложняет задачу. Раздаём по кругу, чтобы школа не осталась
+    # без целой параллели предметов в один день.
+    if method_days:
+        for n in range(min(method_days, len(teachers))):
+            teachers.loc[n, "методический день"] = str(n % days + 1)
+    rooms = _rooms_for(load, subjects, periods=periods, days=days, reserve=reserve)
 
     data = {
         "settings": {
-            "name": "Средняя школа № 1 (условная городская)",
+            "name": name,
             "periods": periods, "days": days, "sixth_day": True, "intro_seen": True,
         },
         "tables": {

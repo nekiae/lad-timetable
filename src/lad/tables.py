@@ -353,6 +353,31 @@ def build_school(tables: dict[str, pd.DataFrame], settings: dict,
                 f"всего {available}. Либо не делите этот предмет, либо добавьте кабинет"
             )
 
+    # По той же причине подгруппы обязаны вести РАЗНЫЕ учителя: они занимаются
+    # в один и тот же час, и один человек в двух кабинетах не окажется.
+    # Ошибка бытовая и очень частая: английский в школе ведёт один сильный
+    # учитель, его и ставят на обе подгруппы — а расписание после этого не
+    # существует вовсе. Без этой проверки завуч получал бы голое «решения нет»
+    # (найдено 25.08.2026 на модели сельской школы: 11 таких строк).
+    teacher_names = {t.id: t.name for t in teachers}
+    who: dict[tuple[str, str, str], set] = {}
+    for item in load:
+        group = school.group(item.group_id)
+        if group.part is None:
+            continue
+        key = (group.class_ids[0], item.subject_id, item.teacher_id)
+        who.setdefault(key, set()).add(group.part)
+    for (class_id, subject_id, teacher_id), parts in who.items():
+        if len(parts) > 1:
+            name = subject_name_by_id.get(subject_id, subject_id)
+            problems.append(
+                f"{class_id}, «{name}»: {teacher_names.get(teacher_id, teacher_id)} "
+                f"назначен(а) сразу на подгруппы {', '.join(sorted(parts))}, "
+                f"а они занимаются в один и тот же час. Назначьте на вторую "
+                f"подгруппу другого учителя — или уберите деление, если предмет "
+                f"идёт всем классом"
+            )
+
     return school, problems
 
 
@@ -410,6 +435,38 @@ def check_norms(school: School) -> list[str]:
                     f"норма будет посчитана мягко, — но в нём останется нарушение. "
                     f"Чтобы его не было, перенесите лишний час в шестой школьный день"
                 )
+
+    # Теснота сетки. Класс учится подряд с первого урока и без окон (HARD-8),
+    # поэтому его часы должны лечь в сетку почти сплошняком. Когда занято
+    # больше девяти десятых мест, свободы у солвера почти нет: любая норма
+    # («физкультура не два дня подряд», «трудный предмет на краю дня») становится
+    # трудновыполнимой, и поиск уходит в минуты и часы без результата.
+    # Замерено 25.08.2026 на гимназии в 28 классов: при сетке в 7 уроков
+    # и заполнении 94% расписание не нашлось за десять минут, при 8 уроках —
+    # нашлось. Сказать надо ДО запуска, иначе завуч будет добавлять время там,
+    # где нужно добавить урок в сетку.
+    slots_per_week = len(school.lesson_slots())
+    busy: dict[str, dict] = {}
+    for item in school.load:
+        for class_id in school.group(item.group_id).class_ids:
+            # Подгруппы одного предмета идут в один слот, значит занимают
+            # столько часов, сколько стоит у одной подгруппы, а не у обеих.
+            per = busy.setdefault(class_id, {})
+            per[item.subject_id] = max(per.get(item.subject_id, 0), item.hours_per_week)
+    tight = sorted(((sum(per.values()), class_id) for class_id, per in busy.items()),
+                   reverse=True)
+    if slots_per_week and tight and tight[0][0] / slots_per_week > 0.9:
+        filled, class_id = tight[0]
+        crowded = sum(1 for hours, _ in tight if hours / slots_per_week > 0.9)
+        warnings.append(
+            f"Сетка тесная: у {class_id} {filled} часов на {slots_per_week} мест — "
+            f"занято {filled / slots_per_week * 100:.0f}%"
+            + (f", и таких классов {crowded}" if crowded > 1 else "")
+            + ". Класс учится без окон, поэтому его уроки должны лечь почти "
+            "сплошняком, и запаса на санитарные нормы не остаётся. Если расписание "
+            "не сойдётся или будет искаться слишком долго — добавьте урок в сетку "
+            "(«максимум уроков в день» слева), это надёжнее, чем ждать дольше"
+        )
 
     # Вторая смена запрещена не везде (п. 92 ССЭТ № 525).
     forbidden = set(school.norms.second_shift_forbidden_parallels)
