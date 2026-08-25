@@ -16,6 +16,7 @@
     какую из них он готов ослабить.
 """
 
+import hashlib
 import json
 import sys
 import time
@@ -516,6 +517,38 @@ def show_assignment() -> None:
                    + ". Проверьте: это выше полутора ставок.")
 
 
+def task_fingerprint(school, weights, rules, budget: int) -> str:
+    """Отпечаток задачи: данные школы плюс настройки поиска.
+
+    Нужен, чтобы не считать заново то, что уже посчитано. Составление —
+    это минуты работы процессора, а кнопку «Составить» нажимают часто:
+    посмотреть результат, вернуться, нажать снова. В облаке за такие
+    повторы платформа урезает приложению процессор.
+
+    В отпечаток входит ВСЁ, что меняет результат: нагрузка, кабинеты,
+    пожелания, веса, строгость норм, бюджет времени. Меняется что угодно
+    из этого — считаем заново, иначе показываем готовое.
+    """
+    payload = {
+        "load": [(i.group_id, i.subject_id, i.teacher_id, i.hours_per_week,
+                  i.kind.value, i.level.value, i.room_id,
+                  i.room_kind.value if i.room_kind else None) for i in school.load],
+        "rooms": [(r.id, r.kind.value) for r in school.rooms],
+        "teachers": [(t.id, sorted(str(x) for x in t.unavailable),
+                      sorted(str(x) for x in t.disliked), t.method_day)
+                     for t in school.teachers],
+        "classes": [(c.id, c.parallel, c.shift.value, c.advanced) for c in school.classes],
+        "periods": school.periods_per_day,
+        "days": sorted(d for d, kind in school.day_kinds.items()
+                       if kind.value == "lessons"),
+        "weights": weights.__dict__,
+        "rules": rules.__dict__,
+        "budget": budget,
+    }
+    blob = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+
 def show_diagnosis(lines: list[str]) -> None:
     """Показать разбор причин.
 
@@ -873,8 +906,27 @@ with tabs[8]:
     job = st.session_state.get("job")
 
     if job is None:
-        if st.button("Составить расписание", type="primary", disabled=bool(problems),
-                     width="stretch", icon=":material/play_arrow:"):
+        # Готовое расписание для ЭТИХ ЖЕ данных — показываем его, а не считаем
+        # заново. Отпечаток берёт и данные, и настройки: изменилось что угодно —
+        # кнопка снова предлагает составить.
+        fingerprint = task_fingerprint(school, weights, rules, budget)
+        done = st.session_state.get("done_for")
+
+        if done == fingerprint and st.session_state.get("result_view"):
+            st.success("Расписание для этих данных уже составлено — оно ниже. "
+                       "Изменится хоть что-то во вводе или настройках — "
+                       "система предложит пересчитать.", icon=":material/check:")
+            if st.button("Составить заново", width="stretch",
+                         icon=":material/refresh:",
+                         help="Поиск идёт разными путями, поэтому второй раз "
+                              "может выйти удачнее. Но чаще это просто трата времени."):
+                st.session_state.pop("done_for", None)
+                st.session_state.job = SolveJob(school, max_seconds=budget,
+                                                weights=weights, rules=rules)
+                st.session_state.job.start()
+                st.rerun()
+        elif st.button("Составить расписание", type="primary", disabled=bool(problems),
+                       width="stretch", icon=":material/play_arrow:"):
             # Солвер уезжает в поток: иначе страница замирает на все десять
             # минут — ни прогресса, ни возможности прервать (см. lad/job.py).
             st.session_state.job = SolveJob(school, max_seconds=budget,
@@ -947,6 +999,7 @@ with tabs[8]:
                 save_schedule("out/schedule.json", school, result.lessons,
                               {"status": result.status, "seconds": elapsed})
                 st.session_state.result_of = job
+                st.session_state.done_for = task_fingerprint(school, weights, rules, budget)
                 st.session_state.result_view = {
                     "report": check(school, result.lessons),
                     "html": html,
@@ -1011,7 +1064,8 @@ with tabs[8]:
                 st.rerun()
             if fresh_start.button("Составить с нуля", width="stretch",
                                   icon=":material/refresh:"):
-                for stale in ("job", "result_of", "result_view", "redo_classes"):
+                for stale in ("job", "result_of", "result_view", "redo_classes",
+                              "done_for"):
                     st.session_state.pop(stale, None)
                 st.rerun()
 
