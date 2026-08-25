@@ -238,7 +238,10 @@ def _rooms_for(load: pd.DataFrame, subjects: pd.DataFrame, periods: int, days: i
     rows, number = [], 101
     for kind, need in sorted(hours.items()):
         if kind == "спортзал":
-            count = max(1, math.ceil(need / (periods * pe_days) * 1.05))
+            # В зале занимаются два класса сразу, поэтому мест вдвое больше,
+            # чем залов, — и залов нужно вдвое меньше, чем по «часам делить
+            # на слоты». Так и живут школы: один зал на двадцать с лишним классов.
+            count = max(1, math.ceil(need / (periods * pe_days * 2) * 1.05))
         else:
             count = max(1, math.ceil(need / (periods * days) * reserve))
         count = max(count, parallel_need.get(kind, 0))
@@ -255,13 +258,15 @@ def _rooms_for(load: pd.DataFrame, subjects: pd.DataFrame, periods: int, days: i
             count = max(count, classes_count)
         for _ in range(count):
             label = str(number) if kind == "обычный" else f"{kind.capitalize()} {number}"
-            rows.append({"кабинет": label, "тип": kind, "мест": 30})
+            rows.append({"кабинет": label, "тип": kind, "мест": 30,
+                         "классов сразу": 2 if kind == "спортзал" else 1})
             number += 1
     return pd.DataFrame(rows)
 
 
 def build(path: Path | str = "data/school_big.json", periods: int = 8, days: int = 5,
-          per_parallel: int = CLASSES_PER_PARALLEL, size: int = CLASS_SIZE,
+          per_parallel: "int | dict[int, int]" = CLASSES_PER_PARALLEL,
+          size: "int | dict[int, int]" = CLASS_SIZE,
           name: str = "Средняя школа № 1 (условная городская)",
           multi_subject: bool = False, reserve: float = 1.25,
           method_days: int = 0, profiles_on: bool = True) -> dict:
@@ -277,8 +282,13 @@ def build(path: Path | str = "data/school_big.json", periods: int = 8, days: int
       • `reserve`       — запас кабинетного фонда; 1.0 значит «впритык»;
       • `method_days`   — скольким учителям дать день без уроков.
     """
-    counts = {p: per_parallel for p in range(5, 12)}
-    sizes = {p: size for p in range(5, 12)}
+    # `per_parallel` и `size` принимают либо число — тогда оно одинаково для всех
+    # параллелей, либо словарь «параллель → значение». Второе нужно потому, что
+    # реальная школа так и устроена: в средних классах три параллели, а в X–XI
+    # остаётся один класс, потому что половина детей уходит в колледжи и лицеи.
+    counts = (per_parallel if isinstance(per_parallel, dict)
+              else {p: per_parallel for p in range(5, 12)})
+    sizes = size if isinstance(size, dict) else {p: size for p in range(5, 12)}
     classes = generate_classes(counts, sizes)
 
     subjects = generate_subjects(parallels_of(classes), load_plan())

@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 
 from ortools.sat.python import cp_model
 
-from .model import Lesson, Level, School, Shift, Slot
+from .model import Lesson, Level, RoomKind, School, Shift, Slot
 
 
 @dataclass
@@ -466,23 +466,54 @@ def solve(
         rooms_by_kind[room.kind].append(room)
 
     subject_room = {s.id: s.required_room for s in school.subjects}
+    subject_strict = {s.id: s.room_strict for s in school.subjects}
+
+    def seats(kind) -> int:
+        """Сколько уроков помещается в кабинеты этого типа ОДНОВРЕМЕННО.
+
+        Не число комнат: спортзал держит два класса сразу, с двумя учителями.
+        """
+        return sum(max(1, room.parallel_classes) for room in rooms_by_kind.get(kind, []))
+
+    # Строгие предметы (физкультура, информатика, труд) считаются по своему
+    # типу кабинета. Нестрогие (физика, химия, биология) — вместе с обычными:
+    # свой кабинет им желателен, но урок идёт и в классной комнате, а кто
+    # сегодня в лаборатории, решается уже при раздаче кабинетов.
     load_by_kind: dict = defaultdict(list)
+    shared: list[int] = []          # претенденты на «свой ИЛИ обычный»
+    shared_kinds: set = set()
     for i, item in enumerate(school.load):
         if item.room_id:
             continue  # кабинет закреплён жёстко — обрабатываем ниже
         kind = item.room_kind or subject_room.get(item.subject_id)
-        if kind is not None:
-            load_by_kind[kind].append(i)
-
-    for kind, indices in load_by_kind.items() if not ignore_rooms else []:
-        capacity = len(rooms_by_kind.get(kind, []))
-        if capacity == 0:
-            # Предмет требует кабинета, которого в школе нет. Не молчим:
-            # это ошибка данных, а не невыполнимая задача.
-            print(f"  ⚠️  нет ни одного кабинета типа {kind.value} — ограничение не наложено")
+        if kind is None:
             continue
-        for slot in slots:
-            model.Add(sum(x[i, slot] for i in indices) <= capacity)
+        strict = subject_strict.get(item.subject_id, True) or item.room_kind is not None
+        if strict or kind == RoomKind.REGULAR:
+            load_by_kind[kind].append(i)
+        else:
+            shared.append(i)
+            shared_kinds.add(kind)
+
+    if not ignore_rooms:
+        for kind, indices in load_by_kind.items():
+            capacity = seats(kind)
+            if capacity == 0:
+                # Предмет требует кабинета, которого в школе нет. Не молчим:
+                # это ошибка данных, а не невыполнимая задача.
+                print(f"  ⚠️  нет ни одного кабинета типа {kind.value} — "
+                      f"ограничение не наложено")
+                continue
+            for slot in slots:
+                model.Add(sum(x[i, slot] for i in indices) <= capacity)
+
+        # Общий пул: обычные кабинеты плюс те спецкабинеты, чьи предметы
+        # согласны идти в обычный. Уроки конкурируют за него все вместе.
+        if shared:
+            pool = seats(RoomKind.REGULAR) + sum(seats(k) for k in shared_kinds)
+            together = shared + load_by_kind.get(RoomKind.REGULAR, [])
+            for slot in slots:
+                model.Add(sum(x[i, slot] for i in together) <= pool)
 
     # Жёстко закреплённый кабинет: занят одним уроком за раз (HARD-3).
     fixed_rooms: dict[str, list[int]] = defaultdict(list)
@@ -1009,6 +1040,7 @@ def assign_rooms(school: School, lessons: list[Lesson]) -> list[Lesson]:
     for room in school.rooms:
         rooms_by_kind[room.kind].append(room)
     subject_room = {s.id: s.required_room for s in school.subjects}
+    subject_strict = {s.id: s.room_strict for s in school.subjects}
     # чем строка нагрузки переопределила тип кабинета (деление труда и т. п.)
     kind_of_lesson = {(i.group_id, i.subject_id): i.room_kind
                       for i in school.load if i.room_kind}
@@ -1018,25 +1050,47 @@ def assign_rooms(school: School, lessons: list[Lesson]) -> list[Lesson]:
     for lesson in lessons:
         by_slot[lesson.slot].append(lesson)
 
+    # Считаем не «занят / свободен», а сколько классов кабинет ещё вмещает:
+    # спортзал держит два урока сразу (Room.parallel_classes).
+    room_by_id = {room.id: room for room in school.rooms}
+
     for slot, slot_lessons in by_slot.items():
-        taken: set[str] = set()
+        used: dict[str, int] = defaultdict(int)
         for lesson in slot_lessons:
             if lesson.room_id:
-                taken.add(lesson.room_id)
-        for lesson in slot_lessons:
+                used[lesson.room_id] += 1
+
+        def has_place(room_id: str) -> bool:
+            room = room_by_id.get(room_id)
+            return used[room_id] < max(1, room.parallel_classes if room else 1)
+
+        # Сначала те, кому кабинет обязателен: физкультуре нужен зал, и если
+        # его займёт химия «просто так», уроку физкультуры идти будет некуда.
+        def strictness(lesson) -> int:
+            return 0 if subject_strict.get(lesson.subject_id, True) else 1
+
+        for lesson in sorted(slot_lessons, key=strictness):
             if lesson.room_id:
                 continue
             kind = kind_of_lesson.get(
                 (lesson.group_id, lesson.subject_id)) or subject_room.get(lesson.subject_id)
-            candidates = rooms_by_kind.get(kind, [])
+            # Кабинет, заданный прямо в строке нагрузки, обсуждению не подлежит;
+            # у остальных нестрогих предметов вторым вариантом идёт обычный.
+            fixed = kind_of_lesson.get((lesson.group_id, lesson.subject_id)) is not None
+            pool = [kind]
+            if not fixed and not subject_strict.get(lesson.subject_id, True) \
+                    and kind != RoomKind.REGULAR:
+                pool.append(RoomKind.REGULAR)
+            candidates = [room for k in pool for room in rooms_by_kind.get(k, [])]
+
             preferred = home.get(lesson.teacher_id)
-            if preferred and preferred not in taken and any(r.id == preferred for r in candidates):
+            if preferred and has_place(preferred) and any(r.id == preferred for r in candidates):
                 lesson.room_id = preferred
             else:
-                free = next((r for r in candidates if r.id not in taken), None)
+                free = next((r for r in candidates if has_place(r.id)), None)
                 lesson.room_id = free.id if free else None
             if lesson.room_id:
-                taken.add(lesson.room_id)
+                used[lesson.room_id] += 1
     return lessons
 
 

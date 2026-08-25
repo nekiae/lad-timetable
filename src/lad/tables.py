@@ -27,6 +27,17 @@ ROOM_KINDS = {
 }
 KIND_BY_VALUE = {v.value: k for k, v in ROOM_KINDS.items()}
 
+# Кабинеты, без которых урок не провести физически: в классной комнате нет
+# ни снарядов, ни компьютеров, ни станков. Остальные спецкабинеты (физика,
+# химия, биология) желательны, но не обязательны — см. Subject.room_strict.
+STRICT_ROOM_KINDS = {
+    RoomKind.GYM, RoomKind.COMPUTER,
+    RoomKind.WORKSHOP_TECH, RoomKind.WORKSHOP_SERVICE,
+}
+# Допризывная подготовка и актовый зал сюда НЕ входят: отдельный кабинет
+# допризывной подготовки есть далеко не в каждой школе, и урок спокойно идёт
+# в обычном классе. Отметить его строгим завуч всегда может галочкой.
+
 # Уровень изучения предмета. В X–XI определяет часы: «4–6» в типовом плане
 # значит 4 на базовом уровне и 6 на повышенном.
 LEVELS = {"базовый": Level.BASE, "повышенный": Level.ADVANCED, "углублённый": Level.DEEP}
@@ -123,10 +134,12 @@ def blank_tables() -> dict[str, pd.DataFrame]:
     return {
         "classes": pd.DataFrame({"класс": ["5А"], "учеников": [24],
                                  "повышенный уровень": [False]}),
-        "subjects": pd.DataFrame({"предмет": ["Математика"], "кабинет": ["обычный"]}),
+        "subjects": pd.DataFrame({"предмет": ["Математика"], "кабинет": ["обычный"],
+                                  "только в нём": [False]}),
         "teachers": pd.DataFrame({"ФИО": ["Иванова И.И."], "методический день": [""],
                                   "свой кабинет": [NONE_CHOICE]}),
-        "rooms": pd.DataFrame({"кабинет": ["101"], "тип": ["обычный"], "мест": [30]}),
+        "rooms": pd.DataFrame({"кабинет": ["101"], "тип": ["обычный"], "мест": [30],
+                               "классов сразу": [1]}),
         "load": pd.DataFrame({"класс": ["5А"], "предмет": ["Математика"],
                               "учитель": ["Иванова И.И."], "часов": [5], "подгруппа": [""],
                               "уровень": ["базовый"], "тип": ["урок"], "кабинет": [NONE_CHOICE]}),
@@ -221,8 +234,20 @@ def build_school(tables: dict[str, pd.DataFrame], settings: dict,
             continue
         sid = f"s{len(subjects)}"
         subject_ids[name] = sid
-        subjects.append(Subject(id=sid, name=name,
-                                required_room=ROOM_KINDS.get(str(row.get("кабинет")), RoomKind.REGULAR)))
+        kind = ROOM_KINDS.get(str(row.get("кабинет")), RoomKind.REGULAR)
+        # «Только в нём» отмечают там, где урок без своего кабинета не провести:
+        # физкультура, информатика, труд. Физика, химия и биология по умолчанию
+        # НЕ строгие — в своём кабинете они идут, когда есть лабораторная,
+        # а иначе спокойно занимают обычный класс, и два класса меняются
+        # кабинетами по обстоятельствам. Именно так работает живая школа,
+        # и без этого один кабинет физики на 24 класса делает расписание
+        # невозможным (проверено 26.08.2026).
+        strict_default = kind in STRICT_ROOM_KINDS
+        raw_strict = row.get("только в нём")
+        strict = strict_default if raw_strict is None or str(raw_strict) == "nan" \
+            else bool(raw_strict)
+        subjects.append(Subject(id=sid, name=name, required_room=kind,
+                                room_strict=strict))
 
     teachers, teacher_ids = [], {}
     for _, row in tables["teachers"].iterrows():
@@ -246,8 +271,13 @@ def build_school(tables: dict[str, pd.DataFrame], settings: dict,
         name = str(row["кабинет"]).strip()
         if not name:
             continue
-        rooms.append(Room(id=name, kind=ROOM_KINDS.get(str(row.get("тип")), RoomKind.REGULAR),
-                          capacity=int(row.get("мест") or 0)))
+        rooms.append(Room(
+            id=name, kind=ROOM_KINDS.get(str(row.get("тип")), RoomKind.REGULAR),
+            capacity=int(row.get("мест") or 0),
+            # Спортзал держит два класса одновременно — это обычная практика,
+            # а не исключение. Пустое значение читаем как единицу.
+            parallel_classes=max(1, int(row.get("классов сразу") or 1)),
+        ))
 
     # Группы генерируются из нагрузки: пустая «подгруппа» = весь класс.
     groups: dict[str, StudyGroup] = {}
@@ -330,9 +360,12 @@ def build_school(tables: dict[str, pd.DataFrame], settings: dict,
     # половину). Значит и кабинетов нужно столько же, сколько подгрупп. Один
     # компьютерный класс и деление информатики — это гарантированно нерешаемо,
     # и сказать об этом надо здесь, а не отдавать голое INFEASIBLE.
+    # Здесь и ниже важно число ОДНОВРЕМЕННЫХ уроков, а не комнат: спортзал
+    # вмещает два класса сразу, и для подгрупп это тоже считается.
     rooms_by_kind: dict = {}
     for room in rooms:
-        rooms_by_kind[room.kind] = rooms_by_kind.get(room.kind, 0) + 1
+        rooms_by_kind[room.kind] = (rooms_by_kind.get(room.kind, 0)
+                                    + max(1, room.parallel_classes))
     subject_room = {s.id: s.required_room for s in subjects}
     subject_name_by_id = {s.id: s.name for s in subjects}
     need: dict[tuple[str, object], int] = {}
@@ -349,8 +382,9 @@ def build_school(tables: dict[str, pd.DataFrame], settings: dict,
             name = subject_name_by_id.get(subject_id, subject_id)
             problems.append(
                 f"{class_id}, «{name}»: {count} подгруппы должны заниматься одновременно, "
-                f"а кабинетов типа «{KIND_BY_VALUE.get(kind.value, kind.value)}» "
-                f"всего {available}. Либо не делите этот предмет, либо добавьте кабинет"
+                f"а кабинеты типа «{KIND_BY_VALUE.get(kind.value, kind.value)}» "
+                f"вмещают {available} за раз. Либо не делите этот предмет, "
+                f"либо добавьте кабинет"
             )
 
     # По той же причине подгруппы обязаны вести РАЗНЫЕ учителя: они занимаются
@@ -468,6 +502,30 @@ def check_norms(school: School) -> list[str]:
             "(«максимум уроков в день» слева), это надёжнее, чем ждать дольше"
         )
 
+    # Та же норма, но для ШКОЛЫ целиком, а не для отдельного класса.
+    # «Не два дня подряд» оставляет три дня из пяти, и в эти три дня должна
+    # уместиться физкультура ВСЕЙ школы. Проверено 26.08.2026 на школе
+    # в 24 класса: 72 урока физкультуры против 48 мест (три дня × восемь
+    # уроков × два класса в зале) — расписания не существует, и солвер
+    # доказывал это за 25 секунд, ничего не объясняя.
+    if pe_name and school.norms.pe_no_two_days_in_row:
+        gym_seats = sum(max(1, room.parallel_classes) for room in school.rooms
+                        if room.kind == RoomKind.GYM)
+        pe_hours = sum(i.hours_per_week for i in school.load
+                       if subject_names.get(i.subject_id, "").startswith(pe_name[:12]))
+        if gym_seats and pe_hours:
+            fits = max_days * school.periods_per_day * gym_seats
+            if pe_hours > fits:
+                warnings.append(
+                    f"Физкультуры в школе {pe_hours} ч в неделю, а норма «не два дня "
+                    f"подряд» (п. 94 ССЭТ № 525) оставляет {max_days} дня из {days}. "
+                    f"За эти дни спортзал вмещает {fits} уроков — на {pe_hours - fits} "
+                    f"меньше, чем нужно. Расписания с этой нормой не существует. "
+                    f"Выходы: переключить её на «мягко» на вкладке «Нормы», или "
+                    f"указать в кабинетах, что в зале занимается больше классов сразу, "
+                    f"или перенести часть часов в шестой школьный день"
+                )
+
     # Вторая смена запрещена не везде (п. 92 ССЭТ № 525).
     forbidden = set(school.norms.second_shift_forbidden_parallels)
     advanced_forbidden = set(school.norms.second_shift_forbidden_if_advanced)
@@ -530,7 +588,14 @@ def generate_subjects(parallels: list[int], plan: dict | None = None) -> pd.Data
     for subject in plan.get("subjects", []):
         hours = subject.get("hours", {})
         if any(str(p) in hours for p in parallels):
-            rows.append({"предмет": subject["name"], "кабинет": subject.get("room", "обычный")})
+            kind = subject.get("room", "обычный")
+            rows.append({
+                "предмет": subject["name"],
+                "кабинет": kind,
+                # Строгими отмечаются только те, кого без своего кабинета
+                # не провести. Физика, химия, биология сюда не входят.
+                "только в нём": ROOM_KINDS.get(kind) in STRICT_ROOM_KINDS,
+            })
     return pd.DataFrame(rows) if rows else blank_tables()["subjects"].iloc[0:0]
 
 
@@ -581,11 +646,17 @@ def generate_load(classes: pd.DataFrame, plan: dict | None = None,
 
 def generate_rooms(regular: int, special: dict[str, int]) -> pd.DataFrame:
     """Кабинетный фонд: обычные нумеруются подряд, спецкабинеты — по названию."""
-    rows = [{"кабинет": str(101 + n), "тип": "обычный", "мест": 30} for n in range(regular)]
+    rows = [{"кабинет": str(101 + n), "тип": "обычный", "мест": 30, "классов сразу": 1}
+            for n in range(regular)]
     for kind, count in special.items():
         for n in range(count):
             suffix = f" {n + 1}" if count > 1 else ""
-            rows.append({"кабинет": f"{kind.capitalize()}{suffix}", "тип": kind, "мест": 30})
+            rows.append({"кабинет": f"{kind.capitalize()}{suffix}", "тип": kind, "мест": 30,
+                         # В спортзале обычно занимаются два класса сразу,
+                         # у каждого свой учитель. Ставим двойку по умолчанию:
+                         # так школа описывается верно без лишних вопросов,
+                         # а если зал маленький — цифру видно и её легко исправить.
+                         "классов сразу": 2 if kind == "спортзал" else 1})
     return pd.DataFrame(rows) if rows else blank_tables()["rooms"].iloc[0:0]
 
 

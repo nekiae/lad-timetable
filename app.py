@@ -670,7 +670,11 @@ with tabs[0]:
 with tabs[1]:
     explain("subjects")
     st.caption("Предмету, которому нужен особый кабинет, выберите тип. Всем остальным — "
-               "«обычный»: это значит любой свободный учебный кабинет.")
+               "«обычный»: это значит любой свободный учебный кабинет. Галочка "
+               "«только в нём» — для тех, кого без своего кабинета не провести: "
+               "физкультура, информатика, труд. У физики, химии и биологии её "
+               "обычно не ставят: в свой кабинет они идут на лабораторную, "
+               "а в остальное время занимают обычный класс.")
     if st.button("Взять предметы из типового плана", key="add_subjects", icon=":material/add:"):
         suggested = generate_subjects(parallels_of(tables["classes"]))
         have = set(options_of("subjects", "предмет"))
@@ -682,8 +686,15 @@ with tabs[1]:
             st.info("Все предметы типового плана уже заведены.")
     tables["subjects"] = st.data_editor(
         tables["subjects"], num_rows="dynamic", width="stretch",
-        column_config={"предмет": st.column_config.TextColumn(required=True),
-                       "кабинет": st.column_config.SelectboxColumn(options=list(ROOM_KINDS))})
+        column_config={
+            "предмет": st.column_config.TextColumn(required=True),
+            "кабинет": st.column_config.SelectboxColumn(options=list(ROOM_KINDS)),
+            "только в нём": st.column_config.CheckboxColumn(
+                help="Урок нельзя провести нигде, кроме этого кабинета. Снимите "
+                     "галочку, если предмет может идти и в обычном классе — "
+                     "тогда система посадит в спецкабинет тех, кому он нужнее, "
+                     "а остальные пойдут в свободные комнаты."),
+        })
 
 with tabs[2]:
     explain("teachers")
@@ -701,13 +712,23 @@ with tabs[2]:
 
 with tabs[3]:
     explain("rooms")
-    st.caption("Каждый кабинет — отдельной строкой. Если спортзала два, заведите оба: "
-               "тогда солвер сможет ставить два урока физкультуры одновременно, а три — нет.")
+    st.caption("Каждый кабинет — отдельной строкой. Колонка «классов сразу» нужна "
+               "спортзалу: там обычно занимаются два класса одновременно, каждый "
+               "со своим учителем. У обычного кабинета оставьте единицу.")
     tables["rooms"] = st.data_editor(
         tables["rooms"], num_rows="dynamic", width="stretch",
-        column_config={"кабинет": st.column_config.TextColumn(required=True),
-                       "тип": st.column_config.SelectboxColumn(options=list(ROOM_KINDS)),
-                       "мест": st.column_config.NumberColumn(min_value=0, max_value=60)})
+        column_config={
+            "кабинет": st.column_config.TextColumn(required=True),
+            "тип": st.column_config.SelectboxColumn(options=list(ROOM_KINDS)),
+            "мест": st.column_config.NumberColumn(min_value=0, max_value=60,
+                                                  help="Сколько учеников помещается."),
+            "классов сразу": st.column_config.NumberColumn(
+                min_value=1, max_value=4,
+                help="Сколько классов занимается здесь ОДНОВРЕМЕННО. Спортзал — "
+                     "обычно 2. Без этого школа с одним залом не описывается: "
+                     "24 класса по 3 часа физкультуры дают 72 урока в неделю, "
+                     "а пятидневка вмещает 40."),
+        })
 
 with tabs[4]:
     explain("load")
