@@ -516,6 +516,27 @@ def show_assignment() -> None:
                    + ". Проверьте: это выше полутора ставок.")
 
 
+def show_diagnosis(lines: list[str]) -> None:
+    """Показать разбор причин.
+
+    Разбор отдаёт готовый текст с разметкой: жирным — название узкого места,
+    строками с «•» — перечисления внутри него. Свои маркеры дописывать поверх
+    нельзя, иначе получаются точки внутри точек. Название узкого места
+    отбивается сверху, чтобы несколько причин читались как отдельные блоки,
+    а не как один сплошной список.
+    """
+    for line in lines:
+        if not line:
+            continue
+        if line.startswith("**"):
+            st.markdown("")
+            st.markdown(line)
+        elif line.startswith("•"):
+            st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;{line}", unsafe_allow_html=True)
+        else:
+            st.markdown(line)
+
+
 @st.fragment(run_every="1s")
 def show_progress(job, budget: int) -> None:
     """Экран составления: что уже улучшилось и сколько ещё можно улучшить.
@@ -902,17 +923,17 @@ with tabs[8]:
                     st.rerun()
                 if why.button("Разобраться, почему", width="stretch",
                               icon=":material/troubleshoot:"):
-                    with st.spinner("Проверяю по очереди: нормы, кабинеты, данные…"):
-                        for line in diagnose(school, rules=rules,
-                                             max_seconds=min(40, budget)):
-                            if line:
-                                st.write("• " + line)
+                    with st.spinner("Проверяю по очереди: кабинеты, нормы, данные…"):
+                        show_diagnosis(diagnose(school, rules=rules,
+                                                max_seconds=min(40, budget),
+                                                total_seconds=180))
             else:
                 st.error("Такого расписания не существует — солвер это доказал. "
                          "Разбираюсь, что именно мешает…")
-                with st.spinner("Проверяю нормы по одной…"):
-                    for line in diagnose(school, rules=rules, max_seconds=min(30, budget)):
-                        st.write(line)
+                with st.spinner("Снимаю требования по одному и смотрю, какое мешает…"):
+                    show_diagnosis(diagnose(school, rules=rules,
+                                            max_seconds=min(40, budget),
+                                            total_seconds=180))
         else:
             # Готовое расписание собирается ОДИН раз и лежит в состоянии сессии.
             # Иначе каждое скачивание файла (а это перезапуск скрипта) пересчитывало
