@@ -243,6 +243,48 @@ st.caption("Логистика Академического Дня — сост�
 
 # ------------------------------------------------------------------ сайдбар
 
+def rooms_verdict(tables: dict) -> list[str]:
+    """Хватает ли кабинетов — по одним лишь классам и кабинетам.
+
+    Класс учится без окон, поэтому на первом уроке заняты ВСЕ классы разом,
+    и каждому нужна комната. Это чистая арифметика, для неё не нужны ни
+    нагрузка, ни учителя, — а значит, ответ можно дать в самом начале ввода.
+    """
+    classes = [c for c in tables["classes"].get("класс", []) if str(c).strip()]
+    if not classes or not len(tables["rooms"]):
+        return []
+
+    seats = 0
+    for _, row in tables["rooms"].iterrows():
+        if not str(row.get("кабинет", "")).strip():
+            continue
+        seats += max(1, int(row.get("классов сразу") or 1))
+
+    if seats >= len(classes):
+        return []
+    return [
+        f"Классов {len(classes)}, а кабинеты вмещают {seats} за раз. "
+        "Класс учится без окон, поэтому на первом уроке заняты все классы "
+        "сразу — и мест нужно не меньше, чем классов. Расписания в одну смену "
+        "не существует: добавьте кабинеты или переведите часть классов "
+        "во вторую смену."
+    ]
+
+
+def school_file_bytes(tables: dict, settings: dict, wishes: dict) -> bytes:
+    """Собрать файл школы — тот же формат, что и data/school.json.
+
+    Отдельная функция, а не save_tables: сохранять надо не на диск программы,
+    а в руки завучу.
+    """
+    payload = {
+        "settings": settings,
+        "tables": {name: df.to_dict("records") for name, df in tables.items()},
+        "wishes": wishes,
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+
+
 with st.sidebar:
     st.subheader("Школа")
     settings["name"] = st.text_input(
@@ -309,9 +351,50 @@ with st.sidebar:
                           difficulty_imbalance=w_diff, teacher_wish=w_wish)
 
     st.divider()
-    if st.button("Сохранить данные", width="stretch", icon=":material/save:"):
-        save_tables(tables, settings, st.session_state.wishes)
-        st.success(f"Сохранено в {DATA_FILE}")
+    # ГЛАВНАЯ ЗАЩИТА ВВЕДЁННОГО. Данные лежат в файле рядом с программой, и на
+    # своей машине этого достаточно. Но в интернете программа живёт в контейнере,
+    # который перезапускается сам по себе — заснул на сутки, обновилась версия, —
+    # и файловая система возвращается к исходной. Введённая школа при этом
+    # пропадает целиком.
+    #
+    # Поэтому файл со школой можно забрать себе. Это единственный способ не
+    # потерять несколько часов работы, и он должен быть на виду, а не в углу.
+    st.subheader("Ваши данные")
+    st.caption("Скачайте файл после ввода. Программа в интернете иногда "
+               "перезапускается и забывает всё, что не сохранено у вас.")
+
+    st.download_button(
+        "Скачать файл школы", data=school_file_bytes(tables, settings,
+                                                     st.session_state.wishes),
+        file_name=f"{settings.get('name', 'школа')}.json".replace("/", "-"),
+        mime="application/json", width="stretch", icon=":material/download:",
+        help="Все введённые классы, учителя, кабинеты, нагрузка и пожелания "
+             "одним файлом. Сохраните его себе.")
+
+    restored = st.file_uploader("Загрузить файл школы", type="json",
+                                label_visibility="collapsed",
+                                help="Вернуть данные из ранее скачанного файла.")
+    if restored is not None and st.session_state.get("restored_name") != restored.name:
+        try:
+            payload = json.loads(restored.getvalue().decode("utf-8"))
+            fresh = blank_tables()
+            for name, rows in (payload.get("tables") or {}).items():
+                if name in fresh:
+                    fresh[name] = pd.DataFrame(rows) if rows else fresh[name].iloc[0:0]
+            st.session_state.tables = fresh
+            st.session_state.settings = payload.get("settings", {})
+            st.session_state.wishes = payload.get("wishes", {})
+            st.session_state.restored_name = restored.name
+            save_tables(st.session_state.tables, st.session_state.settings,
+                        st.session_state.wishes)
+            for stale in ("job", "result_of", "result_view", "done_for"):
+                st.session_state.pop(stale, None)
+            st.success("Данные загружены.")
+            st.rerun()
+        except Exception as error:  # noqa: BLE001 — показываем как есть
+            st.error(f"Не получилось прочитать файл: {error}")
+
+    st.divider()
     if st.button("Ввести данные заново, по шагам", width="stretch", icon=":material/route:"):
         st.session_state.wizard = True
         st.session_state.step = 1
@@ -742,6 +825,13 @@ with tabs[3]:
                      "24 класса по 3 часа физкультуры дают 72 урока в неделю, "
                      "а пятидневка вмещает 40."),
         })
+
+    # Сразу, не дожидаясь нагрузки. Классов и кабинетов достаточно, чтобы
+    # сказать главное: хватит ли комнат вообще. Ждать с этим до конца ввода
+    # нельзя — на школу в 24 класса нагрузка вводится часами, и узнать
+    # в конце, что расписания не существует, значит потерять эти часы зря.
+    for line in rooms_verdict(tables):
+        st.warning(line, icon=":material/priority_high:")
 
 with tabs[4]:
     explain("load")
