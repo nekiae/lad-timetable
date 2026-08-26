@@ -297,17 +297,21 @@ def go(n: int) -> None:
     st.rerun()
 
 
-# Лента шагов: и указатель, и навигация. Порядок должен читаться с одного
-# взгляда, поэтому у каждого шага стоит НОМЕР, а между ними — стрелки.
-# Пройденный шаг помечен галочкой вместо номера: видно, сколько позади.
-# Все шаги кликабельны — вернуться к любому можно в один клик.
+# Лента шагов: и указатель, и навигация. Порядок читается с одного взгляда —
+# у каждого шага номер, между ними стрелки, пройденный помечен галочкой.
+#
+# В кнопке ТОЛЬКО номер и название. Счётчик («Классы · 14») пробовали держать
+# здесь же — и он ломал всю ленту: на девять кнопок в ряд приходится около ста
+# пикселей ширины, текст переносился где попало (слово «Предметы» разрывалось
+# пополам), кнопки выходили разной высоты, лента скакала. Сколько чего введено,
+# видно на самом шаге и в подписи под лентой — там для этого есть место.
 done_count = sum(1 for step in STEPS if step_state(step) == "done")
+total_required = sum(1 for s in STEPS if s["key"])
 
-# Ряд из шагов и стрелок между ними: 9 шагов → 17 колонок.
 widths, order = [], []
 for step in STEPS:
     if order:
-        widths.append(0.35)
+        widths.append(0.22)
         order.append(None)
     widths.append(1.0)
     order.append(step)
@@ -315,30 +319,29 @@ for step in STEPS:
 row = st.columns(widths, vertical_alignment="center")
 for column, step in zip(row, order):
     if step is None:
-        column.markdown("<div style='text-align:center;opacity:.3'>›</div>",
-                        unsafe_allow_html=True)
+        column.markdown(
+            "<div style='text-align:center;opacity:.25;font-size:.8rem'>›</div>",
+            unsafe_allow_html=True)
         continue
 
     state = step_state(step)
-    info = by_key.get(step["key"]) if step["key"] else None
-    number = ":material/check:" if state == "done" else f"{step['n'] + 1}"
-    title = f"**{step['title']}**" if state == "now" else step["title"]
-    if state == "wait":
-        title = f":gray[{title}]"
-    label = f"{number}  {title}"
-    if info and info["count"]:
-        label += f" · {info['count']}"
-
-    hint = step["sub"]
-    if info and info.get("blocked_by"):
-        hint = "сначала: " + ", ".join(info["blocked_by"])
+    number = "✓" if state == "done" else str(step["n"] + 1)
+    title = step["title"]
+    label = f"{number} {title}" if state == "now" else (
+        f":gray[{number} {title}]" if state == "wait" else f"{number} {title}")
     if column.button(label, key=f"nav{step['n']}", width="stretch",
-                     type="primary" if state == "now" else "tertiary", help=hint):
+                     type="primary" if state == "now" else "tertiary"):
         go(step["n"])
 
-st.caption(f"Шаг {step_now + 1} из {len(STEPS)} · заполнено {done_count} "
-           f"из {sum(1 for s in STEPS if s['key'])} · "
-           f"пожелания и нормы можно пропустить")
+# Подпись под лентой отвечает на три вопроса сразу: где мы, сколько сделано
+# и что из оставшегося можно не делать.
+here = STEPS[step_now]
+info_here = by_key.get(here["key"]) if here["key"] else None
+line = f"Шаг {step_now + 1} из {len(STEPS)} · {here['title']}"
+if info_here and info_here["count"]:
+    line += f" · введено {info_here['count']}"
+line += f" · всего заполнено {done_count} из {total_required}"
+st.caption(line)
 st.divider()
 
 
@@ -667,8 +670,13 @@ def explain(key: str) -> None:
     step = by_key[key]
     place = next((s for s in STEPS if s["key"] == key), None)
     if place:
-        badge = "" if not place["n"] else f"Шаг {place['n'] + 1}. "
-        st.subheader(f"{badge}{place['title']}")
+        # Счётчик стоит здесь, а не в ленте: в ленте он ломал вёрстку, а тут
+        # для него есть место и он к месту — человек видит, сколько уже завёл,
+        # ровно там, где заводит.
+        title = f"Шаг {place['n'] + 1}. {place['title']}"
+        if step["count"]:
+            title += f" — {step['count']}"
+        st.subheader(title)
     st.caption(step["why"])
     if step["blocked_by"]:
         st.warning("Сначала заполните: " + ", ".join(step["blocked_by"]) + ". " + step["empty"])

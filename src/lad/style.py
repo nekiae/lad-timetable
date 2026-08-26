@@ -152,6 +152,43 @@ def inject() -> None:
 
       /* Мастер — узкая колонка: это форма, а не таблица. Поле ввода во всю
          ширину экрана выглядит как ошибка вёрстки и мешает читать подписи. */
+      /* ---- лента шагов -------------------------------------------------
+         Девять шагов в ряд — это узкие кнопки, и по умолчанию текст в них
+         переносится где придётся: слово «Предметы» ломалось пополам, соседние
+         кнопки выходили разной высоты, а лента скакала по вертикали.
+         Поэтому: строка не переносится, высота одна на всех, размер мельче
+         основного текста. Не влезло — обрежется многоточием, а полное
+         название всё равно стоит заголовком под лентой. */
+      [class*="st-key-nav"] button {{
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          min-height: 2.4rem;
+          padding: .35rem .5rem !important;
+          font-size: .82rem;
+          border: none !important;
+          background: transparent !important;
+      }}
+      [class*="st-key-nav"] button p {{
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+          font-size: .82rem;
+      }}
+      /* Текущий шаг: подчёркнут снизу, а не залит белой плашкой. Заливка
+         на тёмной теме читалась как выделение мышью или как ошибка. */
+      [class*="st-key-nav"] [data-testid="stBaseButton-primary"] {{
+          background: transparent !important;
+          color: {c['ink']} !important;
+          border-bottom: 2px solid {c['ink']} !important;
+          border-radius: 0 !important;
+          font-weight: 600;
+      }}
+      [class*="st-key-nav"] [data-testid="stBaseButton-primary"] * {{
+          color: {c['ink']} !important;
+      }}
+      [class*="st-key-nav"] button:hover {{
+          background: {c['card']} !important;
+      }}
+
       .st-key-wizard_card {{
           max-width: 720px; margin: 0 auto;
           background: {c['card']};
