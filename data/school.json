@@ -5100,5 +5100,10 @@
     "sixth_day": true,
     "intro_seen": true
   },
-  "wishes": {}
+  "wishes": {
+    "Адамович А. А.": {
+      "hard": [],
+      "soft": []
+    }
+  }
 }

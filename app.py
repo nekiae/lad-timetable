@@ -947,24 +947,24 @@ if tabs[4]:
             else:
                 st.info("Всё, что есть в типовом плане, уже заведено.")
 
-            tables["load"] = st.data_editor(
-            tables["load"], num_rows="dynamic", width="stretch",
-            column_config={
-                "класс": st.column_config.SelectboxColumn(options=options_of("classes", "класс"),
-                                                         required=True),
-                "предмет": st.column_config.SelectboxColumn(options=options_of("subjects", "предмет"),
-                                                           required=True),
-                "учитель": st.column_config.SelectboxColumn(options=options_of("teachers", "ФИО"),
-                                                           required=True),
-                "часов": st.column_config.NumberColumn(min_value=0, max_value=12, required=True),
-                "подгруппа": st.column_config.TextColumn(help="«1» и «2» при делении, иначе пусто"),
-                "уровень": st.column_config.SelectboxColumn(options=list(LEVELS), required=False),
-                "тип": st.column_config.SelectboxColumn(options=list(LESSON_KINDS), required=False),
-                "кабинет": st.column_config.SelectboxColumn(
-                    options=[NONE_CHOICE] + list(ROOM_KINDS), required=False),
-            })
+        tables["load"] = st.data_editor(
+        tables["load"], num_rows="dynamic", width="stretch",
+        column_config={
+            "класс": st.column_config.SelectboxColumn(options=options_of("classes", "класс"),
+                                                     required=True),
+            "предмет": st.column_config.SelectboxColumn(options=options_of("subjects", "предмет"),
+                                                       required=True),
+            "учитель": st.column_config.SelectboxColumn(options=options_of("teachers", "ФИО"),
+                                                       required=True),
+            "часов": st.column_config.NumberColumn(min_value=0, max_value=12, required=True),
+            "подгруппа": st.column_config.TextColumn(help="«1» и «2» при делении, иначе пусто"),
+            "уровень": st.column_config.SelectboxColumn(options=list(LEVELS), required=False),
+            "тип": st.column_config.SelectboxColumn(options=list(LESSON_KINDS), required=False),
+            "кабинет": st.column_config.SelectboxColumn(
+                options=[NONE_CHOICE] + list(ROOM_KINDS), required=False),
+        })
 
-    step_footer('Дальше — пожелания учителей. Шаг необязательный, можно пропустить.')
+        step_footer('Дальше — пожелания учителей. Шаг необязательный, можно пропустить.')
 
 if tabs[5]:
     explain("wishes")
