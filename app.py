@@ -285,25 +285,14 @@ def school_file_bytes(tables: dict, settings: dict, wishes: dict) -> bytes:
     return json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
 
 
+# Название школы и размер сетки живут на ПЕРВОМ ШАГЕ, а не здесь. В боковой
+# панели их легко не заметить, а от них зависит всё остальное. Здесь остаётся
+# то, что настраивают уже перед самым составлением, и то, что нужно в любой
+# момент: файл со школой и справка.
 with st.sidebar:
-    st.subheader("Школа")
-    settings["name"] = st.text_input(
-        "Название", settings.get("name", "Школа"),
-        help="Попадёт в заголовок расписания. В обезличенной версии заменяется на «Школа».")
-    settings["periods"] = st.number_input(
-        "Максимум уроков в день", 4, 10, int(settings.get("periods", 8)),
-        help="Насколько высокой может быть сетка. Это не значит, что уроков будет "
-             "столько: система ставит ровно то, что есть в нагрузке. Прямой нормы "
-             "на это число нет ни в одном документе — оно ограничено недельной "
-             "нагрузкой и временем окончания смены.")
-    settings["days"] = st.number_input(
-        "Дней с уроками", 4, 6, int(settings.get("days", 5)),
-        help="В Беларуси учебная неделя пятидневная (п. 87 СанПиН № 206). "
-             "Менять есть смысл, только если у вас иначе.")
-    settings["sixth_day"] = st.checkbox(
-        "Шестой школьный день", settings.get("sixth_day", True),
-        help="Суббота: факультативы, кружки, «Час здоровья и спорта». Уроков нет, "
-             "поэтому в сетку расписания она не входит.")
+    st.caption(f"**{settings.get('name') or 'Школа не названа'}** · "
+               f"{settings.get('periods', 8)} уроков в день · "
+               f"{settings.get('days', 5)} дней")
 
     st.divider()
     st.subheader("Чьё удобство важнее")
@@ -407,27 +396,110 @@ with st.sidebar:
 status = input_status(tables, st.session_state.wishes)
 by_key = {step["key"]: step for step in status}
 
-# --- строка состояния: что введено, а что ещё нет
-chips = []
-for step in status:
-    if step["done"]:
-        mark = ":green[:material/check_circle:]"
-    elif step.get("optional"):
-        mark = ":gray[:material/radio_button_unchecked:]"
-    else:
-        mark = ":gray[:material/pending:]"
-    chips.append(f"{mark} {step['title']} — {step['count']}")
-st.caption(" · ".join(chips))
+# ------------------------------------------------------------------ шаги
+#
+# Ввод школы — это ПРОЦЕСС, а не набор таблиц: у него есть начало, порядок
+# и конец. Вкладки этого не показывают — по ним не видно, где ты, что дальше
+# и сколько осталось; вдобавок Streamlit не умеет переключать их из кода,
+# поэтому кнопки «Дальше» на вкладках быть не может в принципе.
+#
+# Порядок продуман, а не унаследован от таблиц:
+#   1. Школа    — рамка сетки: сколько уроков в дне и дней в неделе. Раньше
+#                 пряталась в боковой панели, где её легко не заметить, хотя
+#                 от неё зависит всё остальное.
+#   2. Классы   — для кого расписание.
+#   3. Кабинеты — СРАЗУ после классов, потому что нехватку кабинетов видно
+#                 чистой арифметикой, без нагрузки и учителей. Узнать об этом
+#                 надо на второй минуте, а не через три часа ввода.
+#   4. Предметы — набирается кнопкой из типового плана.
+#   5. Учителя  — список тех, кто ведёт.
+#   6. Нагрузка — самое долгое; к ней подходим, когда всё остальное готово.
+#   7. Пожелания — необязательный шаг.
+#   8. Проверка — сверка с учебным планом и санитарные нормы.
+#   9. Составить.
+STEPS = [
+    {"n": 0, "title": "Школа", "sub": "название и сетка", "key": None},
+    {"n": 1, "title": "Классы", "sub": "кто учится", "key": "classes"},
+    {"n": 2, "title": "Кабинеты", "sub": "где учатся", "key": "rooms"},
+    {"n": 3, "title": "Предметы", "sub": "что изучают", "key": "subjects"},
+    {"n": 4, "title": "Учителя", "sub": "кто ведёт", "key": "teachers"},
+    {"n": 5, "title": "Нагрузка", "sub": "кто что ведёт", "key": "load"},
+    {"n": 6, "title": "Пожелания", "sub": "можно пропустить", "key": "wishes"},
+    {"n": 7, "title": "Проверка", "sub": "план и нормы", "key": None},
+    {"n": 8, "title": "Составить", "sub": "результат", "key": None},
+]
+LAST_STEP = STEPS[-1]["n"]
 
-todo = next_step(status)
-if todo:
-    hint = f"**Дальше: {todo['title']}.** {todo['why']}"
-    if todo["blocked_by"]:
-        hint += f" Но сначала заполните: {', '.join(todo['blocked_by'])}."
-    st.info(hint)
+if "ui_step" not in st.session_state:
+    # Начинаем не с первого шага, а с первого НЕЗАПОЛНЕННОГО: вернувшись
+    # к работе, завуч попадает туда, где остановился.
+    todo = next_step(status)
+    st.session_state.ui_step = next(
+        (s["n"] for s in STEPS if todo and s["key"] == todo["key"]), 0)
 
-tabs = st.tabs(["1. Классы", "2. Предметы", "3. Учителя", "4. Кабинеты", "5. Нагрузка",
-                "6. Пожелания", "Учебный план", "Нормы", "Составить"])
+step_now = st.session_state.ui_step
+
+
+def step_state(step: dict) -> str:
+    """done — заполнено, now — здесь мы сейчас, wait — ещё не дошли."""
+    if step["n"] == step_now:
+        return "now"
+    info = by_key.get(step["key"]) if step["key"] else None
+    return "done" if (info and info["done"]) else "wait"
+
+
+def go(n: int) -> None:
+    st.session_state.ui_step = max(0, min(LAST_STEP, n))
+    st.rerun()
+
+
+# Лента шагов: и указатель, и навигация. По ней видно весь путь целиком —
+# сколько позади, где стоим, сколько впереди.
+marks = {"done": ":green[:material/check_circle:]",
+         "now": ":primary[:material/radio_button_checked:]",
+         "wait": ":gray[:material/radio_button_unchecked:]"}
+row = st.columns(len(STEPS))
+for column, step in zip(row, STEPS):
+    state = step_state(step)
+    info = by_key.get(step["key"]) if step["key"] else None
+    label = f"{marks[state]} **{step['title']}**" if state == "now" \
+        else f"{marks[state]} {step['title']}"
+    if info and info["count"]:
+        label += f" · {info['count']}"
+    if column.button(label, key=f"nav{step['n']}", width="stretch",
+                     type="tertiary", help=step["sub"]):
+        go(step["n"])
+
+st.divider()
+
+
+def step_footer(hint: str = "") -> None:
+    """Кнопки «Назад» и «Дальше» — тем же порядком на каждом шаге."""
+    st.divider()
+    if hint:
+        st.caption(hint)
+    back, forward = st.columns(2)
+    if step_now > 0 and back.button("Назад", width="stretch",
+                                    icon=":material/arrow_back:"):
+        go(step_now - 1)
+    if step_now < LAST_STEP and forward.button(
+            "Дальше", type="primary", width="stretch",
+            icon=":material/arrow_forward:"):
+        go(step_now + 1)
+
+
+def on(n: int) -> bool:
+    """Рисуется ли сейчас этот шаг."""
+    return step_now == n
+
+
+# Порядок шагов на экране отличается от порядка блоков в коде, поэтому
+# каждый блок сам говорит, каким шагом он показывается.
+#   блок в коде → шаг на экране
+#   0 классы → 1     3 кабинеты → 2    1 предметы → 3    2 учителя → 4
+#   4 нагрузка → 5   5 пожелания → 6   6 план и 7 нормы → 7    8 составить → 8
+tabs = {0: on(1), 1: on(3), 2: on(4), 3: on(2), 4: on(5),
+        5: on(6), 6: on(7), 7: on(7), 8: on(8)}
 
 
 def show_assignment() -> None:
@@ -734,7 +806,40 @@ def options_of(table: str, column: str) -> list[str]:
     return [str(v).strip() for v in values[column] if str(v).strip() and str(v) != "nan"]
 
 
-with tabs[0]:
+# ------------------------------------------------------------------ шаг 0: школа
+if on(0):
+    st.subheader("О школе")
+    st.caption("Сначала рамка, в которую всё уложится: сколько уроков помещается "
+               "в день и сколько дней в неделе идут уроки. От этого зависит "
+               "предельная нагрузка классов и всё дальнейшее.")
+
+    settings["name"] = st.text_input(
+        "Название школы", settings.get("name", ""),
+        placeholder="Средняя школа № 1 г. Барановичи",
+        help="Попадёт в заголовок расписания.")
+
+    left, right = st.columns(2)
+    settings["periods"] = left.number_input(
+        "Максимум уроков в день", 4, 10, int(settings.get("periods", 8)),
+        help="Насколько высокой может быть сетка. Это не значит, что уроков будет "
+             "столько: система ставит ровно то, что есть в нагрузке. Прямой нормы "
+             "на это число нет ни в одном документе — оно ограничено недельной "
+             "нагрузкой и временем окончания смены.")
+    settings["days"] = right.number_input(
+        "Дней с уроками", 4, 6, int(settings.get("days", 5)),
+        help="В Беларуси учебная неделя пятидневная (п. 87 СанПиН № 206).")
+    settings["sixth_day"] = st.checkbox(
+        "Шестой школьный день: суббота с факультативами и кружками, уроков нет",
+        settings.get("sixth_day", True))
+
+    st.info("Дальше вводим классы, потом кабинеты — и уже на третьем шаге станет "
+            "видно, сходится ли расписание вашей школы в одну смену.",
+            icon=":material/lightbulb:")
+    step_footer()
+
+
+# ------------------------------------------------------------------ шаг 1: классы
+if tabs[0]:
     explain("classes")
     st.caption("Пишите так, как класс называется в школе: 5А, 10Б. «Повышенный уровень» "
                "ставить не нужно — он проставится сам, если на вкладке «Нагрузка» "
@@ -749,7 +854,9 @@ with tabs[0]:
                 help="Проставляется автоматически по уровню предметов в нагрузке."),
         })
 
-with tabs[1]:
+    step_footer('Дальше — кабинеты. Там сразу станет видно, хватает ли их на все классы.')
+
+if tabs[1]:
     explain("subjects")
     st.caption("Предмету, которому нужен особый кабинет, выберите тип. Всем остальным — "
                "«обычный»: это значит любой свободный учебный кабинет. Галочка "
@@ -782,7 +889,9 @@ with tabs[1]:
                      "и переоденется, одного урока не остаётся."),
         })
 
-with tabs[2]:
+    step_footer('Дальше — учителя. Нужны только фамилии, остальное по желанию.')
+
+if tabs[2]:
     explain("teachers")
     st.caption("Заполнять обязательно только ФИО. Методический день — цифра 1–5 "
                "(1 = понедельник), если у учителя есть день без уроков. Свой кабинет — "
@@ -805,7 +914,9 @@ with tabs[2]:
                      "он у нас не бывает, на вкладке «6. Пожелания»."),
         })
 
-with tabs[3]:
+    step_footer('Дальше — нагрузка. Это самый долгий шаг: кто какой предмет ведёт.')
+
+if tabs[3]:
     explain("rooms")
     st.caption("Каждый кабинет — отдельной строкой. Колонка «классов сразу» нужна "
                "спортзалу: там обычно занимаются два класса одновременно, каждый "
@@ -832,7 +943,9 @@ with tabs[3]:
     for line in rooms_verdict(tables):
         st.warning(line, icon=":material/priority_high:")
 
-with tabs[4]:
+    step_footer('Дальше — предметы. Их можно набрать одной кнопкой из типового плана.')
+
+if tabs[4]:
     explain("load")
     st.caption("Класс, предмет и часы система знает из типового плана. Вручную нужно "
                "только одно: кто ведёт. Для этого есть быстрый режим — он ниже.")
@@ -841,59 +954,62 @@ with tabs[4]:
         "Режим", ["Назначить учителей", "Полная таблица"],
         default="Назначить учителей", key="load_mode", label_visibility="collapsed")
 
-if mode == "Назначить учителей":
-    with tabs[4]:
+    if mode == "Назначить учителей":
         show_assignment()
 
-if mode == "Полная таблица":
-  with tabs[4]:
-    with st.expander("Что означают остальные колонки"):
-        st.markdown(
-            "**Подгруппа** — заполняется только при делении класса (иностранный, труд, "
-            "информатика). Заведите две строки, в одной напишите «1», в другой «2»: "
-            "система поставит их в один слот, и половина класса не будет ждать вторую.\n\n"
-            "**Уровень** — базовый или повышенный. В X–XI это меняет часы: математика "
-            "4 или 6, физика 2 или 4. Класс с повышенным уровнем считается профильным, "
-            "и предельная недельная нагрузка для него другая.\n\n"
-            "**Тип** — урок, факультатив, стимулирующее занятие или классный час. "
-            "Факультативы тоже занимают учителя и кабинет, поэтому их стоит вносить.\n\n"
-            "**Кабинет** — только для делений, где подгруппы расходятся по разным "
-            "кабинетам: труд у мальчиков в мастерской, у девочек в кабинете "
-            "обслуживающего труда. В остальных случаях оставьте пустым."
-        )
-    if st.button("Добавить недостающие строки по типовому плану", icon=":material/add:"):
-        draft, unknown = generate_load(tables["classes"])
-        existing = {(str(r["класс"]), str(r["предмет"]), str(r.get("подгруппа") or ""))
-                    for _, r in tables["load"].iterrows()}
-        add = [r for _, r in draft.iterrows()
-               if (str(r["класс"]), str(r["предмет"]), str(r["подгруппа"])) not in existing]
-        if add:
-            tables["load"] = pd.concat([tables["load"], pd.DataFrame(add)], ignore_index=True)
-            st.success(f"Добавлено строк: {len(add)}. Осталось вписать учителей.")
-            if unknown:
-                st.warning("Часы этих предметов в типовом плане заданы дробью по полугодиям — "
-                           "впишите сами: " + "; ".join(unknown[:6]))
-        else:
-            st.info("Всё, что есть в типовом плане, уже заведено.")
+    if mode == "Полная таблица":
+        with st.expander("Что означают остальные колонки"):
+            st.markdown(
+                "**Подгруппа** — заполняется только при делении класса (иностранный, "
+                "труд, информатика). Заведите две строки, в одной напишите «1», "
+                "в другой «2»: система поставит их в один слот, и половина класса "
+                "не будет ждать вторую.\n\n"
+                "**Уровень** — базовый или повышенный. В X–XI это меняет часы: "
+                "математика 4 или 6, физика 2 или 4. Класс с повышенным уровнем "
+                "считается профильным, и предельная недельная нагрузка для него "
+                "другая.\n\n"
+                "**Тип** — урок, факультатив, стимулирующее занятие или классный час. "
+                "Факультативы тоже занимают учителя и кабинет, поэтому их стоит "
+                "вносить.\n\n"
+                "**Кабинет** — только для делений, где подгруппы расходятся по разным "
+                "кабинетам: труд у мальчиков в мастерской, у девочек в кабинете "
+                "обслуживающего труда. В остальных случаях оставьте пустым."
+            )
+        if st.button("Добавить недостающие строки по типовому плану", icon=":material/add:"):
+            draft, unknown = generate_load(tables["classes"])
+            existing = {(str(r["класс"]), str(r["предмет"]), str(r.get("подгруппа") or ""))
+                        for _, r in tables["load"].iterrows()}
+            add = [r for _, r in draft.iterrows()
+                   if (str(r["класс"]), str(r["предмет"]), str(r["подгруппа"])) not in existing]
+            if add:
+                tables["load"] = pd.concat([tables["load"], pd.DataFrame(add)], ignore_index=True)
+                st.success(f"Добавлено строк: {len(add)}. Осталось вписать учителей.")
+                if unknown:
+                    st.warning("Часы этих предметов в типовом плане заданы дробью по полугодиям — "
+                               "впишите сами: " + "; ".join(unknown[:6]))
+            else:
+                st.info("Всё, что есть в типовом плане, уже заведено.")
 
-    tables["load"] = st.data_editor(
-        tables["load"], num_rows="dynamic", width="stretch",
-        column_config={
-            "класс": st.column_config.SelectboxColumn(options=options_of("classes", "класс"),
-                                                     required=True),
-            "предмет": st.column_config.SelectboxColumn(options=options_of("subjects", "предмет"),
-                                                       required=True),
-            "учитель": st.column_config.SelectboxColumn(options=options_of("teachers", "ФИО"),
-                                                       required=True),
-            "часов": st.column_config.NumberColumn(min_value=0, max_value=12, required=True),
-            "подгруппа": st.column_config.TextColumn(help="«1» и «2» при делении, иначе пусто"),
-            "уровень": st.column_config.SelectboxColumn(options=list(LEVELS), required=False),
-            "тип": st.column_config.SelectboxColumn(options=list(LESSON_KINDS), required=False),
-            "кабинет": st.column_config.SelectboxColumn(
-                options=[NONE_CHOICE] + list(ROOM_KINDS), required=False),
-        })
+            tables["load"] = st.data_editor(
+            tables["load"], num_rows="dynamic", width="stretch",
+            column_config={
+                "класс": st.column_config.SelectboxColumn(options=options_of("classes", "класс"),
+                                                         required=True),
+                "предмет": st.column_config.SelectboxColumn(options=options_of("subjects", "предмет"),
+                                                           required=True),
+                "учитель": st.column_config.SelectboxColumn(options=options_of("teachers", "ФИО"),
+                                                           required=True),
+                "часов": st.column_config.NumberColumn(min_value=0, max_value=12, required=True),
+                "подгруппа": st.column_config.TextColumn(help="«1» и «2» при делении, иначе пусто"),
+                "уровень": st.column_config.SelectboxColumn(options=list(LEVELS), required=False),
+                "тип": st.column_config.SelectboxColumn(options=list(LESSON_KINDS), required=False),
+                "кабинет": st.column_config.SelectboxColumn(
+                    options=[NONE_CHOICE] + list(ROOM_KINDS), required=False),
+            })
 
-with tabs[5]:
+    step_footer('Дальше — пожелания учителей. Шаг необязательный, можно пропустить.')
+
+if tabs[5]:
     explain("wishes")
     names = options_of("teachers", "ФИО")
     if not names:
@@ -927,7 +1043,9 @@ with tabs[5]:
                 f"{n} ({len(w.get('hard', []))} запретов, {len(w.get('soft', []))} пожеланий)"
                 for n, w in filled.items()))
 
-with tabs[6]:
+    step_footer('Дальше — проверка: сверка с учебным планом и санитарные нормы.')
+
+if tabs[6]:
     st.subheader("Что положено классам по учебному плану")
     st.caption("Сверка введённой нагрузки с типовым учебным планом (постановление "
                "Минобразования № 75). Без неё забытый предмет обнаружится в сентябре: "
@@ -969,7 +1087,8 @@ with tabs[6]:
                 st.write("• " + line)
             st.success("Готово. Проверьте сверку выше и сохраните данные.")
 
-with tabs[7]:
+
+if tabs[7]:
     st.subheader("Санитарные нормы")
     st.caption("Норма — требование к школе, а не к алгоритму. Если применить всё жёстко "
                "там, где часов больше, чем места, солвер вернёт «решения нет» и ничего "
@@ -993,7 +1112,9 @@ with tabs[7]:
                "типовые учебные планы, постановление Минобразования РБ № 75 от 23.04.2025. "
                "Цифры и цитаты — в data/sanpin_by.json.")
 
-with tabs[8]:
+    step_footer('Дальше — составление расписания.')
+
+if tabs[8]:
     school, problems = build_school(tables, settings, st.session_state.wishes)
 
     cols = st.columns(4)
@@ -1197,6 +1318,11 @@ with tabs[8]:
             # (st.components.v1.html объявлен устаревшим.)
             st.iframe(OUT_HTML, height=700)
 
+
+
+
+if on(LAST_STEP):
+    step_footer()
 
 # ------------------------------------------------------------------ автосохранение
 # Завуч вводит школу часами. Ручная кнопка «Сохранить» этого не выдерживает:
