@@ -135,9 +135,10 @@ def blank_tables() -> dict[str, pd.DataFrame]:
         "classes": pd.DataFrame({"класс": ["5А"], "учеников": [24],
                                  "повышенный уровень": [False]}),
         "subjects": pd.DataFrame({"предмет": ["Математика"], "кабинет": ["обычный"],
-                                  "только в нём": [False]}),
+                                  "только в нём": [False], "всегда парой": [False]}),
         "teachers": pd.DataFrame({"ФИО": ["Иванова И.И."], "методический день": [""],
-                                  "свой кабинет": [NONE_CHOICE]}),
+                                  "свой кабинет": [NONE_CHOICE], "уроков в день": [""],
+                                  "совместитель": [False]}),
         "rooms": pd.DataFrame({"кабинет": ["101"], "тип": ["обычный"], "мест": [30],
                                "классов сразу": [1]}),
         "load": pd.DataFrame({"класс": ["5А"], "предмет": ["Математика"],
@@ -246,8 +247,11 @@ def build_school(tables: dict[str, pd.DataFrame], settings: dict,
         raw_strict = row.get("только в нём")
         strict = strict_default if raw_strict is None or str(raw_strict) == "nan" \
             else bool(raw_strict)
-        subjects.append(Subject(id=sid, name=name, required_room=kind,
-                                room_strict=strict))
+        subjects.append(Subject(
+            id=sid, name=name, required_room=kind, room_strict=strict,
+            always_double=bool(row.get("всегда парой")) if str(
+                row.get("всегда парой")) != "nan" else False,
+        ))
 
     teachers, teacher_ids = [], {}
     for _, row in tables["teachers"].iterrows():
@@ -258,12 +262,16 @@ def build_school(tables: dict[str, pd.DataFrame], settings: dict,
         teacher_ids[name] = tid
         day = str(row.get("методический день") or "").strip()
         wish = wishes.get(name, {})
+        cap = str(row.get("уроков в день") or "").strip()
         teachers.append(Teacher(
             id=tid, name=name,
             method_day=int(day) if day.isdigit() else None,
             home_room_id=optional(row.get("свой кабинет")) or None,
             unavailable={Slot(d, p) for d, p in wish.get("hard", [])},
             disliked={Slot(d, p) for d, p in wish.get("soft", [])},
+            max_per_day=int(cap) if cap.isdigit() and int(cap) > 0 else None,
+            is_external=bool(row.get("совместитель"))
+            if str(row.get("совместитель")) != "nan" else False,
         ))
 
     rooms = []
@@ -526,6 +534,36 @@ def check_norms(school: School) -> list[str]:
                     f"или перенести часть часов в шестой школьный день"
                 )
 
+    # Спаренные уроки съедают вдвое больше места в спецкабинете: пара занимает
+    # мастерскую на два часа подряд, и таких пар в неделе вдвое меньше, чем
+    # часов. Там, где кабинетов впритык, галочка «всегда парой» делает
+    # расписание невозможным — и сказать об этом надо до запуска.
+    double_subjects = {s.id: s.name for s in school.subjects if s.always_double}
+    if double_subjects:
+        room_seats: dict = {}
+        for room in school.rooms:
+            room_seats[room.kind] = (room_seats.get(room.kind, 0)
+                                     + max(1, room.parallel_classes))
+        subject_kind = {s.id: s.required_room for s in school.subjects}
+        pairs_needed: dict = {}
+        for item in school.load:
+            if item.subject_id not in double_subjects:
+                continue
+            kind = item.room_kind or subject_kind.get(item.subject_id)
+            pairs_needed[kind] = pairs_needed.get(kind, 0) + item.hours_per_week // 2
+        pairs_available = (school.periods_per_day // 2) * len(
+            [d for d, kind in school.day_kinds.items() if kind.value == "lessons"])
+        for kind, need in pairs_needed.items():
+            have = room_seats.get(kind, 0) * pairs_available
+            if have and need > have:
+                title = KIND_BY_VALUE.get(kind.value, kind.value) if kind else "обычный"
+                warnings.append(
+                    f"«{', '.join(sorted(double_subjects.values()))}» стоит парами, "
+                    f"и таких пар нужно {need}, а кабинеты «{title}» вмещают {have}. "
+                    f"Расписание не сойдётся. Либо снимите галочку «всегда парой» "
+                    f"на вкладке «2. Предметы», либо добавьте кабинет"
+                )
+
     # Вторая смена запрещена не везде (п. 92 ССЭТ № 525).
     forbidden = set(school.norms.second_shift_forbidden_parallels)
     advanced_forbidden = set(school.norms.second_shift_forbidden_if_advanced)
@@ -595,6 +633,14 @@ def generate_subjects(parallels: list[int], plan: dict | None = None) -> pd.Data
                 # Строгими отмечаются только те, кого без своего кабинета
                 # не провести. Физика, химия, биология сюда не входят.
                 "только в нём": ROOM_KINDS.get(kind) in STRICT_ROOM_KINDS,
+                # Галочку «всегда парой» НЕ проставляем сами, хотя труд почти
+                # везде так и стоит. Причина: пара занимает мастерскую вдвое
+                # дольше, и школа, где мастерских впритык, от этого перестаёт
+                # составляться. Проверено 26.08.2026 на школе в 24 класса:
+                # 20 классов с трудом против 20 пар в неделю — сто процентов
+                # загрузки, расписание не находится. Ставить пару или нет —
+                # решение школы, и принимать его должен завуч.
+                "всегда парой": False,
             })
     return pd.DataFrame(rows) if rows else blank_tables()["subjects"].iloc[0:0]
 

@@ -328,12 +328,20 @@ def solve(
     # а два отдельных, что нормой не разрешено.
     class_parallels = {c.id: c.parallel for c in school.classes}
     names_of_subject = {s.id: s.name for s in school.subjects}
+    subject_always_double = {s.id: s.always_double for s in school.subjects}
     for i, item in enumerate(school.load):
         group = school.group(item.group_id)
         parallel = max((class_parallels.get(c, 0) for c in group.class_ids), default=0)
         subject_name = names_of_subject.get(item.subject_id, "")
         двойной = school.norms.double_allowed(
             subject_name, parallel, item.level != Level.BASE)
+
+        # «Всегда парой» — свойство предмета, заданное школой (труд), а не
+        # разрешение нормы. Оно сильнее: не «можно два», а «либо два, либо ни
+        # одного».
+        всегда_парой = subject_always_double.get(item.subject_id, False) \
+            and item.hours_per_week % 2 == 0
+        двойной = двойной or всегда_парой
 
         by_day: dict[int, list] = defaultdict(list)
         for slot in slots:
@@ -344,6 +352,9 @@ def solve(
                 for p1 in range(1, school.periods_per_day + 1):
                     for p2 in range(p1 + 2, school.periods_per_day + 1):
                         model.Add(x[i, Slot(day, p1, shift)] + x[i, Slot(day, p2, shift)] <= 1)
+            if всегда_парой:
+                # Ноль или два, но не один: одинокий урок труда школе не нужен.
+                model.Add(sum(day_vars) != 1)
 
     # --- HARD-1: учитель не ведёт два урока одновременно
     by_teacher: dict[str, list[int]] = defaultdict(list)
@@ -579,6 +590,14 @@ def solve(
             works = model.NewBoolVar(f"works_{teacher_id}_{day}")
             for period in periods:
                 model.Add(works >= t_busy[period])
+
+            # Потолок дневной нагрузки, если завуч его задал. Без него система,
+            # экономя учителю выходы в школу, может собрать ему восемь уроков
+            # подряд — а это тяжелее, чем лишний день.
+            cap = teacher_by_id[teacher_id].max_per_day
+            if cap:
+                model.Add(sum(x[i, Slot(day, period, shift)]
+                              for i in indices for period in periods) <= cap)
 
             gaps = model.NewIntVar(0, school.periods_per_day, f"gaps_{teacher_id}_{day}")
             model.Add(gaps == sum(present.values()) - sum(t_busy.values()))

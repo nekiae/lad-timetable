@@ -43,8 +43,13 @@ for class_id, days in grid.items():
 
 for (t, d, p), where in teacher_slot.items():
     if len(where) > 1: fails["учитель в двух местах"] += 1
+# Вместимость берём из ИСХОДНЫХ данных школы, а не из lad.validate:
+# проверка должна оставаться независимой от того, что мы проверяем.
+seats = {str(row["кабинет"]): max(1, int(row.get("классов сразу") or 1))
+         for _, row in tabs["rooms"].iterrows() if str(row.get("кабинет", "")).strip()}
 for (r, d, p), where in room_slot.items():
-    if len(where) > 1: fails["кабинет занят дважды"] += 1
+    if len(where) > seats.get(r, 1):
+        fails["в кабинете больше уроков, чем помещается"] += 1
 # окна у класса: уроки должны идти подряд с первого
 for class_id, days in grid.items():
     for day, periods in days.items():

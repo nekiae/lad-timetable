@@ -100,11 +100,17 @@ def check(school: School, lessons: list[Lesson]) -> Report:
                                     f"{len(items)} урока одновременно", str(slot))
             )
 
-    # HARD-3: кабинет занят дважды
+    # HARD-3: в кабинете больше уроков, чем он вмещает.
+    # Не «занят дважды»: спортзал держит два класса одновременно, каждый со
+    # своим учителем, и это норма школы, а не нарушение (Room.parallel_classes).
+    room_seats = {room.id: max(1, room.parallel_classes) for room in school.rooms}
     for (room_id, slot), items in room_slots.items():
-        if len(items) > 1:
+        seats = room_seats.get(room_id, 1)
+        if len(items) > seats:
             report.violations.append(
-                Violation("HARD-3", f"кабинет {room_id} занят {len(items)} раза сразу", str(slot))
+                Violation("HARD-3",
+                          f"в кабинете {room_id} {len(items)} урока сразу, "
+                          f"а помещается {seats}", str(slot))
             )
 
     # HARD-2: у класса два урока сразу.
