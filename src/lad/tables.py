@@ -147,31 +147,29 @@ def blank_tables() -> dict[str, pd.DataFrame]:
     }
 
 
-def load_tables() -> dict[str, pd.DataFrame]:
-    """Прочитать таблицы, добив недостающие пустыми бланками.
+def tables_from_dict(raw: dict) -> dict[str, pd.DataFrame]:
+    """Собрать таблицы из содержимого файла школы.
 
-    Файл может быть неполным: сохранён старой версией, отредактирован руками,
-    обнулён. Отсутствие таблицы не должно ронять приложение — вместо неё
-    подставляется пустой бланк с нужными колонками.
+    Общая точка для файла на диске и для файла, который завуч загружает
+    кнопкой. Раньше загрузка кнопкой просто делала DataFrame из строк — и файл,
+    сохранённый прежней версией, приходил без новых колонок. В таблице их тогда
+    не видно вовсе: показываются те колонки, что есть в данных, а не те, что
+    описаны в настройках. Завуч не смог бы задать ни вместимость зала, ни
+    потолок нагрузки — и не понял бы, почему.
     """
-    tables = blank_tables()
-    if not DATA_FILE.exists():
-        # Пустые таблицы с правильными колонками. Бланк со строкой-примером
-        # («Иванова И.И.») не годится: пример попадёт в данные школы и будет
-        # считаться заполненными данными.
-        return {name: table.iloc[0:0] for name, table in tables.items()}
-    raw = json.loads(DATA_FILE.read_text(encoding="utf-8"))
-    tables = {name: table.iloc[0:0] for name, table in tables.items()}
+    tables = {name: table.iloc[0:0] for name, table in blank_tables().items()}
     for name, rows in (raw.get("tables") or {}).items():
-        if name in tables:
-            table = pd.DataFrame(rows)
-            # колонки, добавленные позже (например «повышенный уровень»),
-            # в старом файле отсутствуют — дополняем значением по умолчанию
-            sample = blank_tables()[name]
-            for column in sample.columns:
-                if column not in table.columns:
-                    table[column] = sample.iloc[0][column] if len(sample) else ""
-            tables[name] = table
+        if name not in tables:
+            continue
+        table = pd.DataFrame(rows)
+        # Колонки, добавленные позже, в старом файле отсутствуют — дополняем
+        # значением по умолчанию из бланка.
+        sample = blank_tables()[name]
+        for column in sample.columns:
+            if column not in table.columns:
+                table[column] = sample.iloc[0][column] if len(sample) else ""
+        tables[name] = table[list(sample.columns)] if set(sample.columns) <= set(
+            table.columns) else table
     # Уже сохранённые файлы держат в необязательных колонках пустую строку —
     # выпадающий список показал бы её как «None». Подменяем на «—».
     for name, column in (("load", "кабинет"), ("teachers", "свой кабинет")):
@@ -179,6 +177,21 @@ def load_tables() -> dict[str, pd.DataFrame]:
         if table is not None and column in table.columns:
             table[column] = [optional(v) or NONE_CHOICE for v in table[column]]
     return tables
+
+
+def load_tables() -> dict[str, pd.DataFrame]:
+    """Прочитать таблицы, добив недостающие пустыми бланками.
+
+    Файл может быть неполным: сохранён старой версией, отредактирован руками,
+    обнулён. Отсутствие таблицы не должно ронять приложение — вместо неё
+    подставляется пустой бланк с нужными колонками.
+    """
+    if not DATA_FILE.exists():
+        # Пустые таблицы с правильными колонками. Бланк со строкой-примером
+        # («Иванова И.И.») не годится: пример попадёт в данные школы и будет
+        # считаться заполненными данными.
+        return {name: table.iloc[0:0] for name, table in blank_tables().items()}
+    return tables_from_dict(json.loads(DATA_FILE.read_text(encoding="utf-8")))
 
 
 def load_wishes() -> dict:

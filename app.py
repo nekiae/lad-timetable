@@ -35,7 +35,7 @@ from lad.solve import PRESETS, RULE_SOURCES, RULE_TITLES, Rules, Weights, assign
 from lad.storage import save_schedule
 from lad.style import inject as inject_style
 from lad.tables import (
-    CANT, DATA_FILE, DAY_NAMES, DISLIKE, NONE_CHOICE, ROOM_KINDS, WISH_OPTIONS, blank_tables, build_school,
+    CANT, DATA_FILE, DAY_NAMES, DISLIKE, NONE_CHOICE, ROOM_KINDS, WISH_OPTIONS, blank_tables, build_school, tables_from_dict,
     LESSON_KINDS, LEVELS, add_subject_slots, apply_profile, assign_teacher, check_norms,
     slot_label,
     compare_with_plan,
@@ -377,11 +377,10 @@ with st.sidebar:
     if restored is not None and st.session_state.get("restored_name") != restored.name:
         try:
             payload = json.loads(restored.getvalue().decode("utf-8"))
-            fresh = blank_tables()
-            for name, rows in (payload.get("tables") or {}).items():
-                if name in fresh:
-                    fresh[name] = pd.DataFrame(rows) if rows else fresh[name].iloc[0:0]
-            st.session_state.tables = fresh
+            # Через ту же дверь, что и файл с диска: файл, сохранённый прежней
+            # версией, придёт без новых колонок, и их надо дополнить — иначе
+            # в таблице их просто не будет видно.
+            st.session_state.tables = tables_from_dict(payload)
             st.session_state.settings = payload.get("settings", {})
             st.session_state.wishes = payload.get("wishes", {})
             st.session_state.restored_name = restored.name
