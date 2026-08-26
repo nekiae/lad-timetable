@@ -118,7 +118,10 @@ def show(settings: dict, on_finish) -> None:
             with st.container(key="intro_badge"):
                 st.markdown(f"### :material/{slide['icon']}:")
             with st.container(key="intro_step"):
-                st.markdown(f":gray[Шаг {index + 1} из {len(SLIDES)}]", text_alignment="center")
+                # Не «шаг»: шагами называется ввод данных, и их девять.
+                # Два разных счётчика с одинаковым словом сбивают с толку.
+                st.markdown(f":gray[{index + 1} из {len(SLIDES)}]",
+                            text_alignment="center")
             st.markdown(f"# {slide['title']}", text_alignment="center")
             st.markdown(f":gray[{slide['lead']}]", text_alignment="center")
             st.space("small")

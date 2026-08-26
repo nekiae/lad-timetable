@@ -60,10 +60,6 @@ if "tables" not in st.session_state:
     raw = json.loads(DATA_FILE.read_text(encoding="utf-8")) if DATA_FILE.exists() else {}
     st.session_state.settings = raw.get("settings", {})
     st.session_state.wishes = load_wishes()
-    # Мастер показывается, если данных ещё нет: одна строка-заглушка из blank_tables
-    # это не «заполненная школа», а пустой бланк.
-    st.session_state.wizard = len(st.session_state.tables["load"]) <= 1
-    st.session_state.step = 1
     # Интро — до мастера и до всего остального: сначала «что это вообще»,
     # потом «введите классы». Обратный порядок бессмысленен.
     st.session_state.intro = not st.session_state.settings.get("intro_seen")
@@ -88,154 +84,6 @@ if st.session_state.get("intro"):
 
 
 # ------------------------------------------------------------------ мастер
-
-def wizard():
-    """Пошаговый ввод для первого запуска.
-
-    Смысл не в красоте, а в том, что завуч не должен догадываться, что и куда
-    вносить. Каждый шаг спрашивает одну вещь и объясняет, зачем она нужна.
-    """
-    step = st.session_state.step
-    st.space("medium")
-    st.markdown("## ЛАД", text_alignment="center")
-    st.markdown(":gray[Первоначальный ввод данных школы]", text_alignment="center")
-    st.space("small")
-
-    with st.container(border=True, key="wizard_card"):
-        st.progress(step / 6, text=f"Шаг {step} из 6")
-
-        if step == 1:
-            st.subheader("О школе")
-            settings["name"] = st.text_input("Название школы", settings.get("name", ""))
-            col1, col2 = st.columns(2)
-            settings["periods"] = col1.number_input(
-                "Максимум уроков в день", 4, 10, int(settings.get("periods", 8)),
-                help="Сколько уроков помещается в сетку. Прямой санитарной нормы на это "
-                     "число нет ни в одном документе — оно ограничено недельной нагрузкой "
-                     "и временем окончания смены.")
-            settings["days"] = col2.number_input(
-                "Дней с уроками", 4, 6, int(settings.get("days", 5)),
-                help="В Беларуси учебная неделя пятидневная (п. 87 СанПиН № 206).")
-            settings["sixth_day"] = st.checkbox(
-                "Шестой школьный день (суббота: факультативы, уроков нет)",
-                settings.get("sixth_day", True))
-
-        elif step == 2:
-            st.subheader("Классы")
-            st.caption("Укажите, сколько классов в каждой параллели. Литеры проставятся сами.")
-            counts, sizes = {}, {}
-            columns = st.columns(7)
-            for n, parallel in enumerate(range(5, 12)):
-                with columns[n]:
-                    st.markdown(f"**{parallel}-е**")
-                    counts[parallel] = st.number_input("классов", 0, 10, 0, key=f"cnt{parallel}",
-                                                       label_visibility="collapsed")
-                    sizes[parallel] = st.number_input("учеников", 0, 40, 24, key=f"sz{parallel}",
-                                                      label_visibility="collapsed")
-            st.caption("Верхнее поле — сколько классов, нижнее — сколько в них учеников.")
-            if any(counts.values()):
-                preview = generate_classes(counts, sizes)
-                st.success(f"Будет заведено {len(preview)} классов: "
-                           + ", ".join(preview["класс"].tolist()[:12])
-                           + ("…" if len(preview) > 12 else ""))
-                st.session_state.new_classes = preview
-
-        elif step == 3:
-            st.subheader("Предметы")
-            classes = st.session_state.get("new_classes", tables["classes"])
-            parallels = parallels_of(classes)
-            plan = load_plan()
-            suggested = generate_subjects(parallels, plan)
-            st.caption("Список взят из типового учебного плана (постановление Минобразования "
-                       "№ 75). Снимите галочки с того, чего у вас нет, — или оставьте как есть.")
-            chosen = []
-            columns = st.columns(2)
-            for n, (_, row) in enumerate(suggested.iterrows()):
-                with columns[n % 2]:
-                    if st.checkbox(row["предмет"], value=True, key=f"sub{n}"):
-                        chosen.append(row)
-            st.session_state.new_subjects = pd.DataFrame(chosen) if chosen else suggested
-
-        elif step == 4:
-            st.subheader("Учителя")
-            st.caption("По одному ФИО в строке. Кто какой предмет ведёт — на следующем шаге "
-                       "в таблице нагрузки.")
-            text = st.text_area("Список учителей", st.session_state.get("teachers_text", ""),
-                                height=220, placeholder="Иванова И.И.\nПетров П.П.\nСидорова С.С.")
-            st.session_state.teachers_text = text
-            names = [line.strip() for line in text.splitlines() if line.strip()]
-            if names:
-                st.success(f"Учителей: {len(names)}")
-                st.session_state.new_teachers = pd.DataFrame({
-                    "ФИО": names, "методический день": [""] * len(names),
-                    "свой кабинет": [""] * len(names)})
-
-        elif step == 5:
-            st.subheader("Кабинеты")
-            st.caption("Спецкабинеты нужны, чтобы солвер не ставил два урока физики "
-                       "в один кабинет и не отправлял физкультуру в класс.")
-            regular = st.number_input("Обычных учебных кабинетов", 0, 60, 12)
-            special = {}
-            columns = st.columns(4)
-            for n, kind in enumerate(["физика", "химия", "биология", "компьютерный",
-                                      "спортзал", "мастерская (техтруд)",
-                                      "мастерская (обсл. труд)", "актовый зал"]):
-                with columns[n % 4]:
-                    special[kind] = st.number_input(kind, 0, 10, 1 if n < 6 else 0, key=f"rm{n}")
-            st.session_state.new_rooms = generate_rooms(regular, {k: v for k, v in special.items() if v})
-
-        elif step == 6:
-            st.subheader("Нагрузка")
-            classes = st.session_state.get("new_classes", tables["classes"])
-            draft, unknown = generate_load(classes)
-            st.caption("Черновик собран по типовому учебному плану: класс, предмет и часы "
-                       "проставлены. Остаётся вписать, кто ведёт — колонка «учитель».")
-            if unknown:
-                st.warning("В типовом плане часы по этим предметам заданы дробью — разное "
-                           "число в первом и втором полугодиях. Мы их НЕ додумывали, "
-                           "внесите сами: " + "; ".join(unknown[:8])
-                           + ("…" if len(unknown) > 8 else ""))
-            st.info(f"Строк нагрузки: {len(draft)}. У предметов с делением на подгруппы "
-                    "(иностранный, информатика, труд) заведено по две строки — так они "
-                    "встанут в один слот, и полкласса не будет ждать вторую половину.")
-            st.session_state.new_load = draft
-
-        # --- навигация
-        # Кнопки прижаты к правому краю и меряются по содержимому: так их
-        # положение не скачет от шага к шагу, а главное действие оказывается
-        # там, где взгляд заканчивает читать форму. Раньше они стояли
-        # в колонках [1,1,2], разъезжались по ширине, а на первом шаге место
-        # «Назад» оставалось пустым и «Далее» уезжала от края.
-        st.space("small")
-        with st.container(horizontal=True, horizontal_alignment="right", gap="small"):
-            if step > 1 and st.button("Назад", icon=":material/arrow_back:"):
-                st.session_state.step -= 1
-                st.rerun()
-            if step < 6:
-                if st.button("Далее", type="primary",
-                             icon=":material/arrow_forward:", icon_position="right"):
-                    st.session_state.step += 1
-                    st.rerun()
-            elif st.button("Готово", type="primary", icon=":material/check:"):
-                for key, name in [("new_classes", "classes"), ("new_subjects", "subjects"),
-                                  ("new_teachers", "teachers"), ("new_rooms", "rooms"),
-                                  ("new_load", "load")]:
-                    if key in st.session_state:
-                        tables[name] = st.session_state[key]
-                save_tables(tables, settings, st.session_state.wishes)
-                st.session_state.wizard = False
-                st.rerun()
-
-        with st.container(horizontal=True, horizontal_alignment="center"):
-            if st.button("Пропустить и вводить таблицами", type="tertiary"):
-                st.session_state.wizard = False
-                st.rerun()
-
-
-if st.session_state.wizard:
-    wizard()
-    st.stop()
-
 
 st.title("ЛАД")
 st.caption("Логистика Академического Дня — составление школьного расписания")
@@ -383,10 +231,6 @@ with st.sidebar:
             st.error(f"Не получилось прочитать файл: {error}")
 
     st.divider()
-    if st.button("Ввести данные заново, по шагам", width="stretch", icon=":material/route:"):
-        st.session_state.wizard = True
-        st.session_state.step = 1
-        st.rerun()
     if st.button("Как это работает", width="stretch", icon=":material/help:"):
         st.session_state.intro = True
         st.session_state.intro_slide = 0
@@ -453,23 +297,48 @@ def go(n: int) -> None:
     st.rerun()
 
 
-# Лента шагов: и указатель, и навигация. По ней видно весь путь целиком —
-# сколько позади, где стоим, сколько впереди.
-marks = {"done": ":green[:material/check_circle:]",
-         "now": ":primary[:material/radio_button_checked:]",
-         "wait": ":gray[:material/radio_button_unchecked:]"}
-row = st.columns(len(STEPS))
-for column, step in zip(row, STEPS):
+# Лента шагов: и указатель, и навигация. Порядок должен читаться с одного
+# взгляда, поэтому у каждого шага стоит НОМЕР, а между ними — стрелки.
+# Пройденный шаг помечен галочкой вместо номера: видно, сколько позади.
+# Все шаги кликабельны — вернуться к любому можно в один клик.
+done_count = sum(1 for step in STEPS if step_state(step) == "done")
+
+# Ряд из шагов и стрелок между ними: 9 шагов → 17 колонок.
+widths, order = [], []
+for step in STEPS:
+    if order:
+        widths.append(0.35)
+        order.append(None)
+    widths.append(1.0)
+    order.append(step)
+
+row = st.columns(widths, vertical_alignment="center")
+for column, step in zip(row, order):
+    if step is None:
+        column.markdown("<div style='text-align:center;opacity:.3'>›</div>",
+                        unsafe_allow_html=True)
+        continue
+
     state = step_state(step)
     info = by_key.get(step["key"]) if step["key"] else None
-    label = f"{marks[state]} **{step['title']}**" if state == "now" \
-        else f"{marks[state]} {step['title']}"
+    number = ":material/check:" if state == "done" else f"{step['n'] + 1}"
+    title = f"**{step['title']}**" if state == "now" else step["title"]
+    if state == "wait":
+        title = f":gray[{title}]"
+    label = f"{number}  {title}"
     if info and info["count"]:
         label += f" · {info['count']}"
+
+    hint = step["sub"]
+    if info and info.get("blocked_by"):
+        hint = "сначала: " + ", ".join(info["blocked_by"])
     if column.button(label, key=f"nav{step['n']}", width="stretch",
-                     type="tertiary", help=step["sub"]):
+                     type="primary" if state == "now" else "tertiary", help=hint):
         go(step["n"])
 
+st.caption(f"Шаг {step_now + 1} из {len(STEPS)} · заполнено {done_count} "
+           f"из {sum(1 for s in STEPS if s['key'])} · "
+           f"пожелания и нормы можно пропустить")
 st.divider()
 
 
@@ -789,8 +658,17 @@ def show_progress(job, budget: int) -> None:
 
 
 def explain(key: str) -> None:
-    """Объяснение шага: зачем он и что будет, если пропустить."""
+    """Шапка шага: где мы, что здесь делаем и зачем.
+
+    Заголовок с номером повторяет то, что показывает лента, — и это не
+    избыточность: лента вверху, а работа идёт здесь, и человек должен видеть
+    название шага там, где смотрит.
+    """
     step = by_key[key]
+    place = next((s for s in STEPS if s["key"] == key), None)
+    if place:
+        badge = "" if not place["n"] else f"Шаг {place['n'] + 1}. "
+        st.subheader(f"{badge}{place['title']}")
     st.caption(step["why"])
     if step["blocked_by"]:
         st.warning("Сначала заполните: " + ", ".join(step["blocked_by"]) + ". " + step["empty"])
@@ -808,7 +686,7 @@ def options_of(table: str, column: str) -> list[str]:
 
 # ------------------------------------------------------------------ шаг 0: школа
 if on(0):
-    st.subheader("О школе")
+    st.subheader("Шаг 1. Школа")
     st.caption("Сначала рамка, в которую всё уложится: сколько уроков помещается "
                "в день и сколько дней в неделе идут уроки. От этого зависит "
                "предельная нагрузка классов и всё дальнейшее.")
@@ -832,17 +710,66 @@ if on(0):
         "Шестой школьный день: суббота с факультативами и кружками, уроков нет",
         settings.get("sixth_day", True))
 
-    st.info("Дальше вводим классы, потом кабинеты — и уже на третьем шаге станет "
-            "видно, сходится ли расписание вашей школы в одну смену.",
-            icon=":material/lightbulb:")
-    step_footer()
+    # Весь путь целиком — один раз, в начале. Человек должен понимать, во что
+    # ввязывается: сколько шагов, что на каждом и где длинный участок.
+    with st.expander("Что предстоит заполнить — весь путь", expanded=True):
+        st.markdown("""
+| Шаг | Что вводим | Сколько это |
+|---|---|---|
+| **2. Классы** | какие классы есть в школе | минуты |
+| **3. Кабинеты** | номера и типы кабинетов | минуты, **сразу покажет, хватает ли их** |
+| **4. Предметы** | берутся кнопкой из типового плана | секунды |
+| **5. Учителя** | фамилии; остальное по желанию | минут десять |
+| **6. Нагрузка** | кто какой предмет ведёт | **самый долгий шаг** |
+| 7. Пожелания | когда учитель не может работать | по желанию |
+| 8. Проверка | сверка с планом и нормы | обычно ничего не трогают |
+| **9. Составить** | результат | минуты ожидания |
+""")
+        st.caption("Часы, предметы и черновик нагрузки система знает из типового "
+                   "учебного плана — вписывать вручную нужно в основном то, "
+                   "кто какой класс ведёт. Введённое сохраняется само, "
+                   "но файл со школой лучше скачать себе — кнопка слева.")
+
+    step_footer("Дальше — классы. Их можно задать по параллелям, "
+                "литеры проставятся сами.")
 
 
 # ------------------------------------------------------------------ шаг 1: классы
 if tabs[0]:
     explain("classes")
+
+    # Заводить два десятка классов по одному — работа ни о чём: литеры идут
+    # подряд, и система расставит их сама. Поэтому сначала быстрый способ,
+    # а таблица ниже — чтобы поправить частности.
+    if not len(tables["classes"]):
+        st.markdown("**Сколько классов в каждой параллели**")
+        counts, sizes = {}, {}
+        columns = st.columns(7)
+        for n, parallel in enumerate(range(5, 12)):
+            with columns[n]:
+                st.markdown(f"**{parallel}-е**")
+                counts[parallel] = st.number_input(
+                    "классов", 0, 10, 0, key=f"q_cnt{parallel}",
+                    label_visibility="collapsed")
+                sizes[parallel] = st.number_input(
+                    "учеников", 0, 40, 24, key=f"q_sz{parallel}",
+                    label_visibility="collapsed")
+        st.caption("Верхнее поле — сколько классов в параллели, нижнее — "
+                   "сколько в них учеников. Литеры (А, Б, В) проставятся сами.")
+        if any(counts.values()):
+            preview = generate_classes(counts, sizes)
+            st.success(f"Будет заведено {len(preview)} классов: "
+                       + ", ".join(preview["класс"].tolist()[:12])
+                       + ("…" if len(preview) > 12 else ""))
+            if st.button("Завести эти классы", type="primary", width="stretch",
+                         icon=":material/playlist_add:"):
+                tables["classes"] = preview
+                save_tables(tables, settings, st.session_state.wishes)
+                st.rerun()
+        st.divider()
+
     st.caption("Пишите так, как класс называется в школе: 5А, 10Б. «Повышенный уровень» "
-               "ставить не нужно — он проставится сам, если на вкладке «Нагрузка» "
+               "ставить не нужно — он проставится сам, если на шаге «Нагрузка» "
                "у предмета выбран повышенный уровень.")
     tables["classes"] = st.data_editor(
         tables["classes"], num_rows="dynamic", width="stretch",
@@ -918,6 +845,28 @@ if tabs[2]:
 
 if tabs[3]:
     explain("rooms")
+
+    if not len(tables["rooms"]):
+        st.markdown("**Сколько кабинетов какого типа**")
+        regular = st.number_input("Обычных учебных кабинетов", 0, 60, 12,
+                                  key="q_regular",
+                                  help="Их должно быть не меньше, чем классов: "
+                                       "на первом уроке заняты все классы сразу.")
+        special = {}
+        columns = st.columns(4)
+        for n, kind in enumerate(["физика", "химия", "биология", "компьютерный",
+                                  "спортзал", "мастерская (техтруд)",
+                                  "мастерская (обсл. труд)", "актовый зал"]):
+            with columns[n % 4]:
+                special[kind] = st.number_input(kind, 0, 10, 1 if n < 6 else 0,
+                                                key=f"q_rm{n}")
+        if st.button("Завести эти кабинеты", type="primary", width="stretch",
+                     icon=":material/playlist_add:"):
+            tables["rooms"] = generate_rooms(
+                regular, {k: v for k, v in special.items() if v})
+            save_tables(tables, settings, st.session_state.wishes)
+            st.rerun()
+        st.divider()
     st.caption("Каждый кабинет — отдельной строкой. Колонка «классов сразу» нужна "
                "спортзалу: там обычно занимаются два класса одновременно, каждый "
                "со своим учителем. У обычного кабинета оставьте единицу.")
@@ -1046,7 +995,10 @@ if tabs[5]:
     step_footer('Дальше — проверка: сверка с учебным планом и санитарные нормы.')
 
 if tabs[6]:
-    st.subheader("Что положено классам по учебному плану")
+    st.subheader("Шаг 8. Проверка")
+    st.caption("Два вопроса перед составлением: всё ли есть по учебному плану "
+               "и какие санитарные нормы применять. Оба можно оставить как есть.")
+    st.markdown("**Что положено классам по учебному плану**")
     st.caption("Сверка введённой нагрузки с типовым учебным планом (постановление "
                "Минобразования № 75). Без неё забытый предмет обнаружится в сентябре: "
                "солвер составит расписание из того, что дали, и промолчит.")
@@ -1115,6 +1067,7 @@ if tabs[7]:
     step_footer('Дальше — составление расписания.')
 
 if tabs[8]:
+    st.subheader("Шаг 9. Составить расписание")
     school, problems = build_school(tables, settings, st.session_state.wishes)
 
     cols = st.columns(4)
