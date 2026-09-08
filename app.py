@@ -133,64 +133,19 @@ def school_file_bytes(tables: dict, settings: dict, wishes: dict) -> bytes:
     return json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
 
 
-# Название школы и размер сетки живут на ПЕРВОМ ШАГЕ, а не здесь. В боковой
-# панели их легко не заметить, а от них зависит всё остальное. Здесь остаётся
-# то, что настраивают уже перед самым составлением, и то, что нужно в любой
-# момент: файл со школой и справка.
+# В боковой панели — ТОЛЬКО то, что нужно в любой момент и не относится
+# ни к какому шагу: какая школа открыта, файл со школой и справка.
+#
+# Название школы и размер сетки ушли на первый шаг: здесь их легко не заметить,
+# а от них зависит всё остальное. Приоритеты и время на поиск — на девятый,
+# к самой кнопке: решение принимается один раз, перед запуском, а панель
+# спрашивала о нём с первого шага до последнего. Панель, которая всё время
+# требует ответов не по делу, приучает в себя не смотреть — а здесь лежит
+# единственная защита введённого, файл со школой.
 with st.sidebar:
     st.caption(f"**{settings.get('name') or 'Школа не названа'}** · "
                f"{settings.get('periods', 8)} уроков в день · "
                f"{settings.get('days', 5)} дней")
-
-    st.divider()
-    st.subheader("Чьё удобство важнее")
-    st.caption("Всем сразу угодить нельзя: меньше окон у учителей — неровнее дни "
-               "у классов, и наоборот. Выберите, куда склонять.")
-    preset_name = st.radio("Приоритет", list(PRESETS), label_visibility="collapsed")
-    st.caption(PRESETS[preset_name]["about"])
-
-    st.divider()
-    st.subheader("Сколько ждать")
-    st.caption("Система ищет лучший вариант, пока есть время. Дольше ищет — меньше "
-               "окон и ровнее дни. Расписание получится в любом случае.")
-    # Значение по умолчанию — не «быстро попробовать», а «хватит на школу».
-    # Замерено 25.08.2026 на 28 классах и 980 часах: со всеми нормами в жёстком
-    # режиме первое законное расписание находится за 119 секунд. С бюджетом
-    # в полминуты завуч получал бы «решения нет» там, где решение есть.
-    #
-    # Пять минут оказались тоже мало. Замерено 08.09.2026 на школе завуча
-    # (24 класса, 838 часов): при бюджете 300 с один запуск из двух возвращал
-    # UNKNOWN — не успел найти вообще ничего. Ответ «подождите ещё» на пятой
-    # минуте хуже, чем десять минут, о которых предупредили заранее.
-    budget = st.select_slider(
-        "Время на поиск", options=[60, 120, 300, 600, 900], value=600,
-        format_func=lambda v: {60: "минута — только для маленькой школы",
-                               120: "2 минуты", 300: "5 минут — если школа небольшая",
-                               600: "10 минут — рекомендуем", 900: "15 минут"}[v],
-        label_visibility="collapsed")
-
-    weights = PRESETS[preset_name]["weights"]
-    with st.expander("Тонкая настройка"):
-        st.caption("Здесь те же приоритеты, но числами. Чем больше число, тем сильнее "
-                   "система избегает этой неприятности. Трогать не обязательно — "
-                   "значения подставлены выбором выше.")
-        w_gap = st.slider("Окно у учителя", 0, 20, weights.teacher_gap, key=f"teacher_gap_{preset_name}",
-                          help="Свободный урок в середине дня: учитель в школе, но без дела.")
-        w_day = st.slider("Лишний выход учителя в школу", 0, 20, weights.teacher_day, key=f"teacher_day_{preset_name}",
-                          help="Приезд ради одного-двух уроков. Чем выше, тем плотнее "
-                               "система соберёт уроки учителя в меньшее число дней.")
-        w_bal = st.slider("Неровные дни у класса", 0, 20, weights.class_imbalance, key=f"class_imbalance_{preset_name}",
-                          help="Когда в один день 8 уроков, а в другой 3.")
-        w_diff = st.slider("Неровная трудность по дням", 0, 20, weights.difficulty_imbalance, key=f"difficulty_imbalance_{preset_name}",
-                           help="Санитарные нормы требуют распределять нагрузку с учётом "
-                                "шкалы трудности предметов (п. 88.2). День с физикой, "
-                                "химией и математикой тяжелее дня с физкультурой и трудом, "
-                                "даже если уроков поровну.")
-        w_wish = st.slider("Пожелание учителя", 0, 20, weights.teacher_wish, key=f"teacher_wish_{preset_name}",
-                           help="Цена нарушения «нежелательно». Запреты «не может» "
-                                "не нарушаются никогда, независимо от этого числа.")
-        weights = Weights(teacher_gap=w_gap, teacher_day=w_day, class_imbalance=w_bal,
-                          difficulty_imbalance=w_diff, teacher_wish=w_wish)
 
     st.divider()
     # ГЛАВНАЯ ЗАЩИТА ВВЕДЁННОГО. Данные лежат в файле рядом с программой, и на
@@ -241,6 +196,66 @@ with st.sidebar:
         st.session_state.intro_slide = 0
         st.rerun()
 
+
+
+def solve_settings() -> tuple[int, Weights, str]:
+    """Приоритеты и время на поиск — на шаге, где их и применяют.
+
+    Раньше это жило в боковой панели и висело там с первого шага до последнего.
+    Решение принимается один раз, перед запуском, а спрашивалось всё время —
+    и панель, где лежит единственная защита введённого (файл со школой),
+    приучала в себя не смотреть.
+    """
+    st.subheader("Чьё удобство важнее")
+    st.caption("Всем сразу угодить нельзя: меньше окон у учителей — неровнее дни "
+               "у классов, и наоборот. Выберите, куда склонять.")
+    preset_name = st.radio("Приоритет", list(PRESETS), key="preset",
+                           label_visibility="collapsed")
+    st.caption(PRESETS[preset_name]["about"])
+
+    st.divider()
+    st.subheader("Сколько ждать")
+    st.caption("Система ищет лучший вариант, пока есть время. Дольше ищет — меньше "
+               "окон и ровнее дни. Расписание получится в любом случае.")
+    # Значение по умолчанию — не «быстро попробовать», а «хватит на школу».
+    # Замерено 25.08.2026 на 28 классах и 980 часах: со всеми нормами в жёстком
+    # режиме первое законное расписание находится за 119 секунд. С бюджетом
+    # в полминуты завуч получал бы «решения нет» там, где решение есть.
+    #
+    # Пять минут оказались тоже мало. Замерено 08.09.2026 на школе завуча
+    # (24 класса, 838 часов): при бюджете 300 с один запуск из двух возвращал
+    # UNKNOWN — не успел найти вообще ничего. Ответ «подождите ещё» на пятой
+    # минуте хуже, чем десять минут, о которых предупредили заранее.
+    budget = st.select_slider(
+        "Время на поиск", options=[60, 120, 300, 600, 900], value=600, key="budget",
+        format_func=lambda v: {60: "минута — только для маленькой школы",
+                               120: "2 минуты", 300: "5 минут — если школа небольшая",
+                               600: "10 минут — рекомендуем", 900: "15 минут"}[v],
+        label_visibility="collapsed")
+
+    weights = PRESETS[preset_name]["weights"]
+    with st.expander("Тонкая настройка"):
+        st.caption("Здесь те же приоритеты, но числами. Чем больше число, тем сильнее "
+                   "система избегает этой неприятности. Трогать не обязательно — "
+                   "значения подставлены выбором выше.")
+        w_gap = st.slider("Окно у учителя", 0, 20, weights.teacher_gap, key=f"teacher_gap_{preset_name}",
+                          help="Свободный урок в середине дня: учитель в школе, но без дела.")
+        w_day = st.slider("Лишний выход учителя в школу", 0, 20, weights.teacher_day, key=f"teacher_day_{preset_name}",
+                          help="Приезд ради одного-двух уроков. Чем выше, тем плотнее "
+                               "система соберёт уроки учителя в меньшее число дней.")
+        w_bal = st.slider("Неровные дни у класса", 0, 20, weights.class_imbalance, key=f"class_imbalance_{preset_name}",
+                          help="Когда в один день 8 уроков, а в другой 3.")
+        w_diff = st.slider("Неровная трудность по дням", 0, 20, weights.difficulty_imbalance, key=f"difficulty_imbalance_{preset_name}",
+                           help="Санитарные нормы требуют распределять нагрузку с учётом "
+                                "шкалы трудности предметов (п. 88.2). День с физикой, "
+                                "химией и математикой тяжелее дня с физкультурой и трудом, "
+                                "даже если уроков поровну.")
+        w_wish = st.slider("Пожелание учителя", 0, 20, weights.teacher_wish, key=f"teacher_wish_{preset_name}",
+                           help="Цена нарушения «нежелательно». Запреты «не может» "
+                                "не нарушаются никогда, независимо от этого числа.")
+        weights = Weights(teacher_gap=w_gap, teacher_day=w_day, class_imbalance=w_bal,
+                          difficulty_imbalance=w_diff, teacher_wish=w_wish)
+    return budget, weights, preset_name
 
 status = input_status(tables, st.session_state.wishes)
 by_key = {step["key"]: step for step in status}
@@ -300,6 +315,33 @@ def step_state(step: dict) -> str:
 def go(n: int) -> None:
     st.session_state.ui_step = max(0, min(LAST_STEP, n))
     st.rerun()
+
+
+# Название шага → его номер. ЕДИНСТВЕННОЕ место, где номера шагов связаны
+# с именами: раньше номер вписывали прямо в текст подсказки («добавьте кабинеты
+# на вкладке 4»), и после перестановки шагов все такие подсказки начали врать —
+# кабинеты стали третьим шагом, учителя пятым, а вкладок не стало вовсе.
+# Теперь и солвер, и проверки называют шаг ПО ИМЕНИ: «на шаге «Кабинеты»».
+STEP_NUMBER = {step["title"]: step["n"] for step in STEPS}
+
+
+def guide(text: str, kind: str = "warning", icon: str | None = None,
+          key: str = "") -> None:
+    """Сообщение, которое отсылает к другому шагу, — вместе с дорогой туда.
+
+    «Добавьте кабинеты на шаге «Кабинеты»» без кнопки — это указание пойти
+    и найти самому. Название шага в кавычках система распознаёт сама
+    и ставит рядом кнопку перехода, так что читать и идти можно одним движением.
+    """
+    getattr(st, kind)(text, **({"icon": icon} if icon else {}))
+    targets = [(title, n) for title, n in STEP_NUMBER.items()
+               if f"«{title}»" in text and n != step_now]
+    if not targets:
+        return
+    for column, (title, number) in zip(st.columns(len(targets) + 2), targets):
+        if column.button(f"Перейти: {title}", key=f"goto_{key}_{number}",
+                         width="stretch", icon=":material/arrow_forward:"):
+            go(number)
 
 
 # Лента шагов: и указатель, и навигация. Порядок читается с одного взгляда —
@@ -395,8 +437,9 @@ def show_assignment() -> None:
                 "или мастером первого запуска.", icon=":material/info:")
         return
     if not names:
-        st.warning("Сначала заведите учителей на вкладке «3. Учителя».",
-                   icon=":material/person_off:")
+        # Молча: про недостающих учителей уже сказал explain() в шапке шага,
+        # и второе такое же сообщение подряд — с такой же кнопкой перехода —
+        # читается как сбой, а не как забота.
         return
 
     progress = subject_progress(load)
@@ -599,6 +642,12 @@ def show_diagnosis(lines: list[str]) -> None:
             st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;{line}", unsafe_allow_html=True)
         else:
             st.markdown(line)
+            # Строка «что делать» называет шаг — отсюда и уводим.
+            for title, number in STEP_NUMBER.items():
+                if f"«{title}»" in line and number != step_now:
+                    if st.button(f"Перейти: {title}", key=f"diag_go{number}",
+                                 icon=":material/arrow_forward:"):
+                        go(number)
 
 
 @st.fragment(run_every="1s")
@@ -684,7 +733,10 @@ def explain(key: str) -> None:
         st.subheader(title)
     st.caption(step["why"])
     if step["blocked_by"]:
-        st.warning("Сначала заполните: " + ", ".join(step["blocked_by"]) + ". " + step["empty"])
+        # Названия в кавычках — чтобы guide() узнал шаги и дал кнопки перехода.
+        blocked = ", ".join(f"«{title}»" for title in step["blocked_by"])
+        guide(f"Сначала заполните: {blocked}. " + step["empty"], "warning",
+              key=f"blocked_{key}")
     elif not step["done"]:
         st.caption("Пока пусто. " + step["empty"])
 
@@ -851,7 +903,7 @@ if tabs[2]:
             "совместитель": st.column_config.CheckboxColumn(
                 help="Работает ещё в одной школе. Система пока не знает его "
                      "расписания там и считает свободным — отметьте дни, когда "
-                     "он у нас не бывает, на вкладке «6. Пожелания»."),
+                     "он у нас не бывает, на шаге «Пожелания»."),
         })
 
     step_footer('Дальше — нагрузка. Это самый долгий шаг: кто какой предмет ведёт.')
@@ -902,8 +954,8 @@ if tabs[3]:
     # сказать главное: хватит ли комнат вообще. Ждать с этим до конца ввода
     # нельзя — на школу в 24 класса нагрузка вводится часами, и узнать
     # в конце, что расписания не существует, значит потерять эти часы зря.
-    for line in rooms_verdict(tables):
-        st.warning(line, icon=":material/priority_high:")
+    for n, line in enumerate(rooms_verdict(tables)):
+        guide(line, "warning", icon=":material/priority_high:", key=f"rooms_verdict{n}")
 
     step_footer('Дальше — предметы. Их можно набрать одной кнопкой из типового плана.')
 
@@ -975,7 +1027,7 @@ if tabs[5]:
     explain("wishes")
     names = options_of("teachers", "ФИО")
     if not names:
-        st.info("Сначала заведите учителей на вкладке «3. Учителя».")
+        pass  # шапка шага уже сказала, кого не хватает, и дала туда дорогу
     else:
         # Раньше селектор и легенда стояли двумя колонками и не совпадали
         # по верхнему краю — глаз спотыкался на каждой перерисовке.
@@ -1104,8 +1156,8 @@ if tabs[8]:
     else:
         st.caption("Санитарные нормы не загружены — проверки по нормам выключены.")
 
-    for warning in check_norms(school):
-        st.warning(warning, icon=":material/warning:")
+    for n, warning in enumerate(check_norms(school)):
+        guide(warning, "warning", icon=":material/warning:", key=f"norms{n}")
 
     if problems:
         st.error("Данные не сойдутся — сначала исправьте:")
@@ -1114,6 +1166,16 @@ if tabs[8]:
 
     rules = st.session_state.get("rules", Rules())
     job = st.session_state.get("job")
+
+    # Настройки поиска — здесь, вплотную к кнопке, а не в боковой панели.
+    # Пока идёт расчёт или показан результат, они не нужны: свёрнуты в блок
+    # с одной итоговой строкой, чтобы экран занимало дело, а не рычаги.
+    if job is None:
+        budget, weights, preset_name = solve_settings()
+        st.divider()
+    else:
+        with st.expander("Настройки поиска"):
+            budget, weights, preset_name = solve_settings()
 
     if job is None:
         # Готовое расписание для ЭТИХ ЖЕ данных — показываем его, а не считаем
@@ -1265,6 +1327,19 @@ if tabs[8]:
                     for v in report.violations:
                         st.write(f"**{v.rule}** — {v.what} · {v.where}")
 
+            # САМО РАСПИСАНИЕ — сразу под цифрами, до кнопок.
+            #
+            # Раньше сетка стояла в самом низу: сначала цифры, потом
+            # предупреждения, список нарушений, кнопки скачивания и блок
+            # пересборки — и только под ними то, ради чего всё делалось.
+            # Человек, открывший результат, хочет прежде всего УВИДЕТЬ
+            # расписание, а решать, забирать его или переделывать, — после.
+            #
+            # Через iframe, а не st.html: расписание несёт свои стили,
+            # и в общем документе они протекли бы на всё приложение.
+            # (st.components.v1.html объявлен устаревшим.)
+            st.iframe(OUT_HTML, height=700)
+
             XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
             st.markdown("**Забрать расписание**")
@@ -1305,10 +1380,6 @@ if tabs[8]:
                     st.session_state.pop(stale, None)
                 st.rerun()
 
-            # Предпросмотр — через iframe, а не st.html: расписание несёт свои
-            # стили, и в общем документе они бы протекли на всё приложение.
-            # (st.components.v1.html объявлен устаревшим.)
-            st.iframe(OUT_HTML, height=700)
 
 
 
