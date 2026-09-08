@@ -108,6 +108,12 @@ class Rules:
         return getattr(self, name, "off") == "hard"
 
 
+# Сколько раз возобновлять фазу улучшения, если солвер вышел раньше бюджета.
+# Ограничение чисто страховочное: обычно кругов один-два, цикл и так упирается
+# во время. Нужно на случай, если солвер начнёт возвращаться мгновенно.
+_MAX_IMPROVE_ROUNDS = 8
+
+
 class SolveResult:
     def __init__(
         self, status: str, lessons: list[Lesson], wall_time: float, penalty: int | None = None,
@@ -1008,16 +1014,66 @@ def solve(
             model.ClearObjective()
 
         model.Minimize(objective)
-        # Остаток бюджета — по реальным часам. `solver.WallTime()` показывает
-        # длительность ПОСЛЕДНЕГО вызова, а не всё потраченное время, и второй
-        # этап из-за этого получал пять секунд вместо половины бюджета.
-        solver.parameters.max_time_in_seconds = max(
-            5.0, max_seconds - (time.monotonic() - started_at))
-        status = solver.Solve(model, reporter)
-        if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE) and fallback:
+
+        # УЛУЧШАЕМ ДО КОНЦА БЮДЖЕТА, А НЕ ДО ПЕРВОЙ ОСТАНОВКИ СОЛВЕРА.
+        #
+        # CP-SAT иногда завершает поиск сам, задолго до лимита, со статусом
+        # FEASIBLE — то есть без доказательства оптимальности. Замерено
+        # 07.09.2026 на 28 классах, бюджет 300 с, одни и те же данные:
+        #     прогон А — вторая фаза 291 с из 291, окон у учителей  38
+        #     прогон Б — вторая фаза 166 с из 294, окон у учителей  52
+        #     прогон В — вторая фаза  25 с из 279, окон у учителей 268
+        # Разброс в семь раз при одинаковом вводе. Для демо это хуже, чем
+        # медленно: нельзя нажать кнопку и не знать, что покажет экран.
+        #
+        # Поэтому после каждого возврата, если время ещё есть, перезапускаем
+        # поиск от лучшего найденного (снимаем старые подсказки и ставим новые —
+        # повторный AddHint для той же переменной делает модель невалидной).
+        # Лучшее решение держим отдельно: следующий круг стартует с той же
+        # точки, но пойти может хуже, и отдавать надо не последнее, а лучшее.
+        best_lessons: list[Lesson] = []
+        best_penalty: int | None = None
+        status = cp_model.UNKNOWN
+        rounds = 0
+        while True:
+            left = max_seconds - (time.monotonic() - started_at)
+            if left < 5.0 or rounds >= _MAX_IMPROVE_ROUNDS:
+                break
+            rounds += 1
+            solver.parameters.max_time_in_seconds = left
+            round_started = time.monotonic()
+            status = solver.Solve(model, reporter)
+            if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+                break
+            value = int(solver.ObjectiveValue())
+            if best_penalty is None or value < best_penalty:
+                best_penalty = value
+                best_lessons = [
+                    Lesson(slot=slot, group_id=item.group_id, subject_id=item.subject_id,
+                           teacher_id=item.teacher_id, room_id=item.room_id, kind=item.kind)
+                    for i, item in enumerate(school.load)
+                    for slot in slots if solver.Value(x[i, slot])
+                ]
+            if status == cp_model.OPTIMAL:
+                break  # доказано лучшее — дальше искать нечего
+            if should_stop and should_stop():
+                break
+            # Защита от холостого кручения: если солвер вернулся мгновенно,
+            # следующий круг вернётся так же, и цикл только сожжёт бюджет.
+            if time.monotonic() - round_started < 1.0:
+                break
+            model.ClearHints()
+            for key, var in x.items():
+                model.AddHint(var, solver.Value(var))
+
+        if best_lessons:
+            return SolveResult(
+                "OPTIMAL" if status == cp_model.OPTIMAL else "FEASIBLE",
+                best_lessons, time.monotonic() - started_at, best_penalty, relaxed)
+        if fallback:
             # Улучшить не успели — отдаём законное расписание из первой фазы.
             # Оно неоптимальное, но это несравнимо лучше пустого ответа.
-            return SolveResult("FEASIBLE", fallback, solver.WallTime(), None)
+            return SolveResult("FEASIBLE", fallback, solver.WallTime(), None, relaxed)
     else:
         solver.parameters.max_time_in_seconds = max_seconds
         if on_progress:
