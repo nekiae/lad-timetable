@@ -19,95 +19,98 @@ toolbarMode = "minimal"
 # нарушение нормы красное, всё сошлось зелёное. Так документ и выглядит
 # документом, а не приложением.
 #
-# Заголовки набраны антиквой (Source Serif 4) — шрифт с засечками читается
+# Заголовки набраны антиквой (Newsreader) — шрифт с засечками читается
 # как постановление и учебник, гротеск — как стартап. Текст и таблицы —
-# Inter: в цифрах и мелком кегле засечки мешают.
+# Geist: в цифрах и мелком кегле засечки мешают.
 
 [theme]
-font = "'Inter':https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
-headingFont = "'Source Serif 4':https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&display=swap"
+font = "'Geist':https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap"
+headingFont = "'Newsreader':https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap"
 codeFont = "'JetBrains Mono':https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
 baseFontSize = 15
 baseFontWeight = 400
 headingFontSizes = ["40px", "30px", "23px", "18px", "16px", "14px"]
 headingFontWeights = [700, 700, 600, 600, 600, 600]
 codeFontSize = "0.85rem"
-baseRadius = "12px"
-buttonRadius = "8px"
+baseRadius = "10px"
+buttonRadius = "6px"
 showWidgetBorder = true
 showSidebarBorder = false
 linkUnderline = true
 
 [theme.light]
-primaryColor = "#18181B"
-backgroundColor = "#F4F4F5"
+primaryColor = "#111111"
+backgroundColor = "#FBFBFA"
 secondaryBackgroundColor = "#FFFFFF"
-codeBackgroundColor = "#F4F4F5"
-textColor = "#09090B"
-linkColor = "#18181B"
-borderColor = "#E4E4E7"
-grayColor = "#71717A"
-blueColor = "#1D4ED8"
-greenColor = "#15803D"
-redColor = "#B91C1C"
-orangeColor = "#B45309"
-yellowColor = "#A16207"
-violetColor = "#6D28D9"
+codeBackgroundColor = "#F7F6F3"
+textColor = "#111111"
+linkColor = "#111111"
+borderColor = "#EAEAEA"
+grayColor = "#787774"
+blueColor = "#1F6C9F"
+greenColor = "#346538"
+redColor = "#9F2F2D"
+orangeColor = "#956400"
+yellowColor = "#956400"
+violetColor = "#5B4B8A"
 # Подложки уведомлений. По умолчанию st.info выводится ярко-синей плашкой —
 # в монохроме она бьёт по глазам сильнее самого текста. Оставляем цвет только
 # там, где он несёт смысл (ошибка, успех), и приглушаем до фона документа.
-blueBackgroundColor = "#F4F4F5"
-blueTextColor = "#3F3F46"
-greenBackgroundColor = "#F1F7F3"
-greenTextColor = "#14532D"
-redBackgroundColor = "#FBF3F2"
-redTextColor = "#7F1D1D"
-orangeBackgroundColor = "#FAF6EE"
-orangeTextColor = "#78350F"
-yellowBackgroundColor = "#FAF7EC"
-yellowTextColor = "#713F12"
-dataframeBorderColor = "#E4E4E7"
-dataframeHeaderBackgroundColor = "#F4F4F5"
-chartCategoricalColors = ["#18181B", "#52525B", "#A1A1AA", "#D4D4D8", "#1D4ED8", "#15803D", "#B91C1C"]
+blueBackgroundColor = "#F7F6F3"
+blueTextColor = "#4A4945"
+greenBackgroundColor = "#EDF3EC"
+greenTextColor = "#346538"
+redBackgroundColor = "#FDEBEC"
+redTextColor = "#9F2F2D"
+orangeBackgroundColor = "#FBF3DB"
+orangeTextColor = "#956400"
+yellowBackgroundColor = "#FBF3DB"
+yellowTextColor = "#956400"
+dataframeBorderColor = "#EAEAEA"
+dataframeHeaderBackgroundColor = "#F7F6F3"
+chartCategoricalColors = ["#111111", "#57564F", "#8A8880", "#C9C6BE", "#1F6C9F", "#346538", "#9F2F2D"]
 
 # Чёрный сайдбар — как в референсе: инструменты отделены от документа.
 [theme.light.sidebar]
-backgroundColor = "#111113"
-secondaryBackgroundColor = "#1F1F23"
-codeBackgroundColor = "#1F1F23"
-textColor = "#F4F4F5"
-borderColor = "#2A2A2E"
-primaryColor = "#A1A1AA"
-linkColor = "#E4E4E7"
+backgroundColor = "#141310"
+secondaryBackgroundColor = "#211F1B"
+codeBackgroundColor = "#211F1B"
+textColor = "#F7F6F3"
+borderColor = "#2C2A26"
+primaryColor = "#A5A29A"
+linkColor = "#EAEAEA"
 
+# Тёмная — тот же тёплый монохром, повёрнутый: не синеватый уголь, а
+# коричневатый. Акценты приглушены до той же меры, что и в светлой:
+# цвет здесь несёт смысл (нарушено / сошлось), а не украшает.
 [theme.dark]
-primaryColor = "#52525B"
-backgroundColor = "#09090B"
-secondaryBackgroundColor = "#161618"
-codeBackgroundColor = "#161618"
-textColor = "#F4F4F5"
-linkColor = "#E4E4E7"
-borderColor = "#27272A"
-grayColor = "#A1A1AA"
-blueColor = "#60A5FA"
-greenColor = "#4ADE80"
-redColor = "#F87171"
-orangeColor = "#FBBF24"
-yellowColor = "#FDE047"
-violetColor = "#A78BFA"
-blueBackgroundColor = "#1C1C1F"
-blueTextColor = "#D4D4D8"
-greenBackgroundColor = "#12261A"
-greenTextColor = "#86EFAC"
-redBackgroundColor = "#2A1616"
-redTextColor = "#FCA5A5"
-orangeBackgroundColor = "#2A2114"
-orangeTextColor = "#FCD34D"
-yellowBackgroundColor = "#292315"
-yellowTextColor = "#FDE68A"
-dataframeBorderColor = "#27272A"
-dataframeHeaderBackgroundColor = "#161618"
-chartCategoricalColors = ["#F4F4F5", "#A1A1AA", "#71717A", "#52525B", "#60A5FA", "#4ADE80", "#F87171"]
+primaryColor = "#57564F"
+backgroundColor = "#0F0E0C"
+secondaryBackgroundColor = "#181714"
+codeBackgroundColor = "#181714"
+textColor = "#F7F6F3"
+linkColor = "#EAEAEA"
+borderColor = "#2C2A26"
+grayColor = "#A5A29A"
+blueColor = "#8FB6D4"
+greenColor = "#8FBF9C"
+redColor = "#D89A92"
+orangeColor = "#D4B678"
+yellowColor = "#D4B678"
+violetColor = "#A79BC4"
+blueBackgroundColor = "#1A1D20"
+blueTextColor = "#C9C6BE"
+greenBackgroundColor = "#182018"
+greenTextColor = "#9FC9A9"
+redBackgroundColor = "#231917"
+redTextColor = "#E0AAA2"
+orangeBackgroundColor = "#221D14"
+orangeTextColor = "#DCC189"
+yellowBackgroundColor = "#221D14"
+yellowTextColor = "#DCC189"
+dataframeBorderColor = "#2C2A26"
+dataframeHeaderBackgroundColor = "#181714"
+chartCategoricalColors = ["#F7F6F3", "#A5A29A", "#7A776F", "#57564F", "#8FB6D4", "#8FBF9C", "#D89A92"]
 
 [theme.dark.sidebar]
 backgroundColor = "#000000"

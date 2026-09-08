@@ -2,7 +2,7 @@
 
 Основа темы живёт в `.streamlit/config.toml` (цвета, шрифты, радиусы) — там
 ей и место. Сюда попадает только то, чего темой не выразить: белая карточка
-с тенью на сером поле и плашка под иконку.
+на тёплом поле и плашка под иконку.
 
 Стиль: монохром, антиква в заголовках, много воздуха. Ориентир — документ,
 а не приложение: расписание уходит завучу и, возможно, в министерство,
@@ -15,28 +15,35 @@ CSS цепляется за классы `st-key-<key>` — Streamlit прост
 
 import streamlit as st
 
+# Тени практически нет — карточку держит рамка, а не подложка. Прежняя тень
+# (16px размытия при непрозрачности .12) собирала под каждой карточкой серое
+# облако, и экран из документа превращался в набор всплывающих окон.
 _LIGHT = {
     "card": "#FFFFFF",
-    "border": "#E4E4E7",
-    "badge": "#18181B",
+    "border": "#EAEAEA",
+    "badge": "#111111",
     "badge_ink": "#FFFFFF",
-    "shadow": "0 1px 2px rgba(9,9,11,.04), 0 16px 40px -12px rgba(9,9,11,.12)",
-    "rule": "#E4E4E7",
-    "ink": "#18181B",
+    "shadow": "0 1px 2px rgba(17,17,17,.03)",
+    "shadow_hover": "0 2px 8px rgba(17,17,17,.04)",
+    "rule": "#EAEAEA",
+    "ink": "#111111",
     "paper": "#FFFFFF",
-    "ink_hover": "#3F3F46",
+    "ink_hover": "#787774",
 }
 
 _DARK = {
-    "card": "#161618",
-    "border": "#27272A",
-    "badge": "#F4F4F5",
-    "badge_ink": "#09090B",
-    "shadow": "0 1px 2px rgba(0,0,0,.4), 0 16px 40px -12px rgba(0,0,0,.6)",
-    "rule": "#27272A",
-    "ink": "#F4F4F5",
-    "paper": "#09090B",
-    "ink_hover": "#D4D4D8",
+    "card": "#181714",
+    "border": "#2C2A26",
+    "badge": "#F7F6F3",
+    "badge_ink": "#0F0E0C",
+    # На тёмном фоне тень не читается вовсе — карточку отделяет то, что она
+    # светлее поля. Заметная тень здесь даёт только грязь по краю.
+    "shadow": "none",
+    "shadow_hover": "none",
+    "rule": "#2C2A26",
+    "ink": "#F7F6F3",
+    "paper": "#0F0E0C",
+    "ink_hover": "#A5A29A",
 }
 
 
@@ -66,7 +73,7 @@ def inject() -> None:
       .st-key-intro_card {{
           background: {c['card']};
           border: 1px solid {c['border']};
-          border-radius: 20px;
+          border-radius: 12px;
           box-shadow: {c['shadow']};
           padding: 2.8rem 3.2rem 2.4rem;
       }}
@@ -76,7 +83,7 @@ def inject() -> None:
           width: 60px; height: 60px !important; min-height: 60px;
           margin: 0 auto .6rem; padding: 0 !important;
           background: {c['badge']};
-          border-radius: 17px;
+          border-radius: 12px;
           display: flex; align-items: center; justify-content: center;
       }}
       .st-key-intro_badge * {{
@@ -134,7 +141,7 @@ def inject() -> None:
       .stTabs {{
           background: {c['card']};
           border: 1px solid {c['border']};
-          border-radius: 18px;
+          border-radius: 12px;
           box-shadow: {c['shadow']};
           padding: 1.4rem 2rem 2rem;
       }}
@@ -193,20 +200,25 @@ def inject() -> None:
           max-width: 720px; margin: 0 auto;
           background: {c['card']};
           border: 1px solid {c['border']};
-          border-radius: 20px;
+          border-radius: 12px;
           box-shadow: {c['shadow']};
           padding: 2.4rem 2.8rem 2rem;
       }}
 
-      /* Метрики — карточками: на экране результата это главные цифры */
+      /* Метрики — карточками: на экране результата это главные цифры.
+         Наведение приподнимает их одной еле заметной тенью, без движения:
+         таблица цифр не должна шевелиться под курсором. */
       .stMetric {{
           background: {c['card']};
           border: 1px solid {c['border']};
-          border-radius: 14px;
+          border-radius: 12px;
           padding: 1rem 1.2rem;
+          box-shadow: {c['shadow']};
+          transition: box-shadow 200ms cubic-bezier(.16, 1, .3, 1);
       }}
+      .stMetric:hover {{ box-shadow: {c['shadow_hover']}; }}
 
-      .stExpander {{ border-radius: 14px; }}
+      .stExpander {{ border-radius: 12px; }}
       .stDataFrame {{ border-radius: 12px; overflow: hidden; }}
       .stAlert {{ border-radius: 12px; }}
 
@@ -240,7 +252,7 @@ def headline(items: list[tuple[str, str, str]]) -> None:
       .lad-hl {{
           display: grid; grid-template-columns: repeat(3, 1fr);
           background: {c['card']}; border: 1px solid {c['border']};
-          border-radius: 20px; box-shadow: {c['shadow']};
+          border-radius: 12px; box-shadow: {c['shadow']};
           margin: .4rem 0 1.4rem;
       }}
       /* На узком экране три колонки схлопываются в столбец: цифра в 3rem
@@ -256,9 +268,10 @@ def headline(items: list[tuple[str, str, str]]) -> None:
       .lad-hl-value {{
           /* Тот же шрифт, что у заголовков (config.toml, headingFont):
              главные цифры — часть шапки документа, а не подпись к виджету. */
-          font-family: "Source Serif 4", Georgia, serif;
+          font-family: "Newsreader", Georgia, serif;
+          letter-spacing: -.03em;
           font-size: 3rem; line-height: 1.05; font-weight: 500;
-          color: {c['ink']}; letter-spacing: -.02em;
+          color: {c['ink']};
       }}
       .lad-hl-label {{
           margin-top: .5rem; font-size: .95rem; color: {c['ink']};

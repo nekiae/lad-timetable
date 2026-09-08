@@ -188,27 +188,30 @@ _TEMPLATE = """<!doctype html>
 <title>{title}</title>
 <style>
   :root {{
-    --bg: #fbfbfa; --fg: #1c1b1a; --muted: #6b6a68; --line: #e3e1dd;
-    --card: #ffffff; --good: #2f7d4f; --bad: #b4402f; --accent: #2b5f8f;
+    --bg: #fbfbfa; --fg: #111111; --muted: #787774; --line: #eaeaea;
+    --card: #ffffff; --good: #346538; --bad: #9f2f2d; --accent: #1f6c9f;
   }}
   @media (prefers-color-scheme: dark) {{
     :root {{
-      --bg: #17161a; --fg: #eceae6; --muted: #9a9894; --line: #2f2d33;
-      --card: #201f24; --good: #6fbf8b; --bad: #e08471; --accent: #7aa8d6;
+      --bg: #0f0e0c; --fg: #f7f6f3; --muted: #a5a29a; --line: #2c2a26;
+      --card: #181714; --good: #8fbf9c; --bad: #d89a92; --accent: #8fb6d4;
     }}
   }}
   * {{ box-sizing: border-box; }}
   body {{ margin: 0; padding: 24px; background: var(--bg); color: var(--fg);
     font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }}
   .wrap {{ max-width: 1100px; margin: 0 auto; }}
-  h1 {{ font-size: 22px; margin: 0 0 4px; }}
+  h1 {{ font-size: 24px; margin: 0 0 4px; letter-spacing: -0.02em;
+    font-family: "Iowan Old Style", Georgia, "Times New Roman", serif;
+    font-weight: 500; }}
   .sub {{ color: var(--muted); margin-bottom: 24px; font-size: 14px; }}
   .cards {{ display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
     margin-bottom: 24px; }}
   .card {{ background: var(--card); border: 1px solid var(--line); border-radius: 10px;
     padding: 14px 16px; }}
-  .card .num {{ font-size: 21px; font-weight: 600; letter-spacing: -0.02em;
-    line-height: 1.25; }}
+  .card .num {{ font-size: 26px; font-weight: 500; letter-spacing: -0.03em;
+    line-height: 1.2;
+    font-family: "Iowan Old Style", Georgia, "Times New Roman", serif; }}
   .card .lbl {{ color: var(--muted); font-size: 13px; margin-top: 4px; }}
   .card .was {{ color: var(--muted); font-weight: 400; }}
   .card.good .num > span:last-child {{ color: var(--good); }}

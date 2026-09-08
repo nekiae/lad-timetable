@@ -827,7 +827,10 @@ def plan_summary(school: School, plan: dict | None = None) -> pd.DataFrame:
             "введено": got,
             "предельная норма": limit if limit else "—",
             "расхождений": problems,
-            "сверх нормы": "⚠️ да" if limit and got > limit else "нет",
+            # Без значка: колонка называет факт, а не кричит о нём — рядом
+            # стоит колонка «расхождений», и два восклицания подряд обесценивают
+            # оба. Превышение нормы и так читается в таблице.
+            "сверх нормы": "да" if limit and got > limit else "нет",
         })
     return pd.DataFrame(rows)
 
