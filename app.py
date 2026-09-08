@@ -673,7 +673,17 @@ def show_progress(job, budget: int) -> None:
                    "и выравниваю дни.", icon=":material/check_circle:")
 
     st.progress(min(1.0, spent / max(1, budget)),
-                text=f"{spent:.0f} с из {budget} с")
+                text=f"{spent // 60:.0f} мин {spent % 60:02.0f} с "
+                     f"из {budget // 60} мин")
+
+    # СКОЛЬКО ЭТО ДОЛЖНО ДЛИТЬСЯ — сказать прямо, а не оставить гадать.
+    # Десять минут ожидания без объяснения читаются как «зависло»; те же
+    # десять минут, о которых предупредили, — как работа. Замерено 08.09.2026
+    # на 24 классах: расписание находится за минуты, а остальное время уходит
+    # на то, чтобы убрать окна у учителей.
+    st.caption("Так и должно быть: поиск идёт до конца отведённого времени. "
+               "Страницу можно оставить открытой и заняться другим — "
+               "или забрать лучшее из найденного кнопкой внизу.")
 
     if latest and latest.metrics:
         first = job.first_improved
@@ -755,6 +765,37 @@ if on(0):
     st.caption("Сначала рамка, в которую всё уложится: сколько уроков помещается "
                "в день и сколько дней в неделе идут уроки. От этого зависит "
                "предельная нагрузка классов и всё дальнейшее.")
+
+    # ЧЬИ ЭТО ДАННЫЕ. Программа открывается на заполненной школе — так видно
+    # сразу, что она умеет, и не надо вводить сутки, чтобы это выяснить.
+    # Но человек, впервые открывший экран, не знает, пример перед ним
+    # или чья-то работа, и можно ли это стирать. Отсюда прямая надпись
+    # и кнопка: пометка `example` снимается, как только начали своё.
+    if settings.get("example"):
+        st.info("Открыт **пример** — школа на 24 класса, чтобы было что посмотреть. "
+                "Свою школу вводите поверх: пример при этом никуда не денется, "
+                "он лежит в файле программы.", icon=":material/science:")
+        wipe, keep = st.columns(2)
+        if wipe.button("Начать со своей школы", type="primary", width="stretch",
+                       icon=":material/note_add:",
+                       help="Очистит все таблицы. Пример можно вернуть, "
+                            "перезагрузив страницу до первого изменения."):
+            st.session_state.tables = {name: table.iloc[0:0]
+                                       for name, table in blank_tables().items()}
+            st.session_state.wishes = {}
+            st.session_state.settings = {"periods": 8, "days": 5, "sixth_day": True,
+                                         "intro_seen": True, "name": ""}
+            for stale in ("job", "result_of", "result_view", "done_for"):
+                st.session_state.pop(stale, None)
+            save_tables(st.session_state.tables, st.session_state.settings,
+                        st.session_state.wishes)
+            go(0)
+        if keep.button("Посмотреть на примере", width="stretch",
+                       icon=":material/visibility:",
+                       help="Оставить данные примера и пройти по шагам."):
+            settings["example"] = False
+            save_tables(tables, settings, st.session_state.wishes)
+            st.rerun()
 
     settings["name"] = st.text_input(
         "Название школы", settings.get("name", ""),
@@ -1106,28 +1147,61 @@ if tabs[6]:
 
 
 if tabs[7]:
-    st.subheader("Санитарные нормы")
-    st.caption("Норма — требование к школе, а не к алгоритму. Если применить всё жёстко "
-               "там, где часов больше, чем места, солвер вернёт «решения нет» и ничего "
-               "не объяснит. Переключатель даёт выбор: ослабить норму и увидеть "
-               "расписание с перечнем нарушений.")
+    # НОРМЫ — СВЁРНУТЫ, И ЭТО НЕ ПРЯТАНЬЕ.
+    #
+    # Семь переключателей с пояснениями и ссылками на пункты постановлений —
+    # это половина экрана, которую подавляющее большинство не трогает: нормы
+    # уже стоят так, как написано в первоисточнике. Развёрнутыми они делали
+    # шаг «Проверка» простынёй, где сверка с учебным планом — то, ради чего
+    # на шаг заходят, — терялась среди рычагов.
+    #
+    # Поэтому наверху одна строка: как сейчас применяются нормы. Если что-то
+    # ослаблено, она это называет, и мимо такого не пройти.
+    st.divider()
     strictness = {}
     defaults = Rules()
     labels = {v: k for k, v in STRICTNESS.items()}
-    for name, title in RULE_TITLES.items():
-        current = getattr(defaults, name)
-        chosen = st.segmented_control(
-            title, list(STRICTNESS), default=labels[current],
-            key=f"rule_{name}")
-        strictness[name] = STRICTNESS[chosen or labels[current]]
-        st.caption(RULE_SOURCES.get(name, ""))
-    st.session_state.rules = Rules(**strictness)
+    # Ослабление считается от ЗНАЧЕНИЯ ПО УМОЛЧАНИЮ, а не от «жёстко».
+    # По умолчанию часть норм и так мягкая — там, где первоисточник говорит
+    # «оптимально» и «рекомендуется», а не «не допускается». Считать их
+    # ослабленными значило бы пугать человека тем, что он и не трогал.
+    rank = {"hard": 2, "soft": 1, "off": 0}
+    weakened = [RULE_TITLES[name].lower() for name in RULE_TITLES
+                if rank[STRICTNESS[st.session_state.get(
+                    f"rule_{name}", labels[getattr(defaults, name)])]]
+                < rank[getattr(defaults, name)]]
 
-    st.divider()
-    st.caption("Первоисточники: постановление Минздрава РБ № 206 от 27.12.2012; "
-               "постановление Совмина РБ № 525 от 07.08.2019 (ССЭТ) в ред. 12.07.2024; "
-               "типовые учебные планы, постановление Минобразования РБ № 75 от 23.04.2025. "
-               "Цифры и цитаты — в data/sanpin_by.json.")
+    if weakened:
+        st.markdown("**Санитарные нормы** — вы ослабили: "
+                    + ", ".join(weakened[:3])
+                    + (f" и ещё {len(weakened) - 3}" if len(weakened) > 3 else ""))
+    else:
+        st.markdown("**Санитарные нормы** — применяются так, как записано "
+                    "в документах.")
+
+    with st.expander("Настроить строгость норм"):
+        st.caption("Норма — требование к школе, а не к алгоритму. Если применить всё "
+                   "жёстко там, где часов больше, чем места, солвер вернёт «решения нет» "
+                   "и ничего не объяснит. Переключатель даёт выбор: ослабить норму "
+                   "и увидеть расписание с перечнем нарушений.")
+        for name, title in RULE_TITLES.items():
+            current = getattr(defaults, name)
+            chosen = st.segmented_control(
+                title, list(STRICTNESS), default=labels[current],
+                key=f"rule_{name}")
+            strictness[name] = STRICTNESS[chosen or labels[current]]
+            st.caption(RULE_SOURCES.get(name, ""))
+
+        st.divider()
+        st.caption("Первоисточники: постановление Минздрава РБ № 206 от 27.12.2012; "
+                   "постановление Совмина РБ № 525 от 07.08.2019 (ССЭТ) в ред. 12.07.2024; "
+                   "типовые учебные планы, постановление Минобразования РБ № 75 "
+                   "от 23.04.2025. Цифры и цитаты — в data/sanpin_by.json.")
+
+    # Свёрнутый блок Streamlit всё равно выполняет, поэтому переключатели
+    # созданы и правила собраны — их видно солверу независимо от того,
+    # открывал ли кто-нибудь этот блок.
+    st.session_state.rules = Rules(**strictness)
 
     step_footer('Дальше — составление расписания.')
 

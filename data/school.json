@@ -4751,7 +4751,8 @@
     "periods": 8,
     "days": 5,
     "sixth_day": true,
-    "intro_seen": true
+    "intro_seen": true,
+    "example": true
   },
   "wishes": {
     "Адамович А. А.": {
