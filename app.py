@@ -33,7 +33,7 @@ from lad.job import SolveJob
 from lad.render import render
 from lad.solve import PRESETS, RULE_SOURCES, RULE_TITLES, Rules, Weights, assign_rooms, diagnose, solve
 from lad.storage import save_schedule
-from lad.style import inject as inject_style
+from lad.style import headline, inject as inject_style
 from lad.tables import (
     CANT, DATA_FILE, DAY_NAMES, DISLIKE, NONE_CHOICE, ROOM_KINDS, WISH_OPTIONS, blank_tables, build_school, tables_from_dict,
     LESSON_KINDS, LEVELS, add_subject_slots, apply_profile, assign_teacher, check_norms,
@@ -1213,15 +1213,41 @@ if tabs[8]:
             view = st.session_state.result_view
             report, html = view["report"], view["html"]
 
-            st.success(f"Готово за {elapsed:.0f} с — {len(result.lessons)} уроков "
-                       f"({result.status})")
+            # ГЛАВНЫЕ ТРИ ЦИФРЫ — то, ради чего всё делалось.
+            #
+            # Восемь равных метрик читаются как таблица: непонятно, с чего
+            # начинать смотреть. А ответ на вопрос «ну и что тут хорошего»
+            # состоит ровно из трёх величин: за сколько составлено, сколько
+            # нарушено санитарных норм, сколько у учителей окон. Остальные
+            # пять — подробности, они уходят ниже.
+            spent = (f"{elapsed / 60:.0f} мин" if elapsed >= 90
+                     else f"{elapsed:.0f} с")
+            norms = len(report.norm_violations)
+            headline([
+                (spent, "на составление",
+                 f"{len(result.lessons)} уроков, {len(school.classes)} классов"),
+                (str(norms), "нарушений санитарных норм",
+                 "постановление Минздрава № 206 и ССЭТ № 525"
+                 if not norms else "разбор ниже"),
+                (str(report.teacher_gaps), "окон у учителей",
+                 f"на {len(school.teachers)} человек за неделю"),
+            ])
 
-            # По четыре в ряд: восемь метрик в одну строку сжимаются так,
-            # что подписи обрезаются многоточием и цифры теряют смысл.
-            summary = list(report.summary().items())
-            for start in range(0, len(summary), 4):
-                for col, (label, value) in zip(st.columns(4), summary[start:start + 4]):
+            # Остальное — обычными метриками, по четыре в ряд: восемь в одну
+            # строку сжимаются так, что подписи обрезаются многоточием.
+            shown = {"Нарушений санитарных норм", "Окон у учителей"}
+            summary = [item for item in report.summary().items()
+                       if item[0] not in shown]
+            for start in range(0, len(summary), 3):
+                for col, (label, value) in zip(st.columns(3), summary[start:start + 3]):
                     col.metric(label, value)
+
+            # Статус солвера нужен, но мелким шрифтом: OPTIMAL значит «лучше
+            # не бывает и это доказано», FEASIBLE — «законно и хорошо, но
+            # доказать лучшее не успели». Завучу важнее цифры выше.
+            st.caption("Доказано, что лучше не составить" if result.status == "OPTIMAL"
+                       else "Все требования соблюдены; на доказательство того, "
+                            "что лучше нельзя, времени не хватило")
 
             # Точечные послабления: норму нельзя было выполнить в конкретном
             # классе, и система ослабила её ТОЛЬКО там. Завуч должен узнать

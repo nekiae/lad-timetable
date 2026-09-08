@@ -214,3 +214,59 @@ def inject() -> None:
       .stMainBlockContainer h1 {{ margin-bottom: .1rem; }}
     </style>
     """)
+
+
+def headline(items: list[tuple[str, str, str]]) -> None:
+    """Три главные цифры результата — крупно, в один ряд.
+
+    Отчёт валидатора даёт восемь величин, и все восемь равного размера читаются
+    как таблица: глаз не знает, с чего начать, а на показе третьим лицам
+    (Startup Day, §8.6 CLAUDE.md) времени разбираться нет ни у кого. Поэтому
+    наверх выносятся три цифры, ради которых всё делалось, — сколько это заняло,
+    сколько нарушено норм, сколько у учителей окон, — а остальное уходит вниз
+    обычными метриками.
+
+    `items` — тройки (значение, подпись, пояснение).
+    """
+    c = palette()
+    cells = "".join(f"""
+      <div class="lad-hl-cell">
+        <div class="lad-hl-value">{value}</div>
+        <div class="lad-hl-label">{label}</div>
+        <div class="lad-hl-note">{note}</div>
+      </div>""" for value, label, note in items)
+    st.html(f"""
+    <style>
+      .lad-hl {{
+          display: grid; grid-template-columns: repeat(3, 1fr);
+          background: {c['card']}; border: 1px solid {c['border']};
+          border-radius: 20px; box-shadow: {c['shadow']};
+          margin: .4rem 0 1.4rem;
+      }}
+      /* На узком экране три колонки схлопываются в столбец: цифра в 3rem
+         в трети телефонного экрана не помещается и переносится по цифрам. */
+      @media (max-width: 640px) {{
+          .lad-hl {{ grid-template-columns: 1fr; }}
+          .lad-hl-cell + .lad-hl-cell {{
+              border-left: none; border-top: 1px solid {c['rule']};
+          }}
+      }}
+      .lad-hl-cell {{ padding: 1.5rem 1.6rem; }}
+      .lad-hl-cell + .lad-hl-cell {{ border-left: 1px solid {c['rule']}; }}
+      .lad-hl-value {{
+          /* Тот же шрифт, что у заголовков (config.toml, headingFont):
+             главные цифры — часть шапки документа, а не подпись к виджету. */
+          font-family: "Source Serif 4", Georgia, serif;
+          font-size: 3rem; line-height: 1.05; font-weight: 500;
+          color: {c['ink']}; letter-spacing: -.02em;
+      }}
+      .lad-hl-label {{
+          margin-top: .5rem; font-size: .95rem; color: {c['ink']};
+      }}
+      .lad-hl-note {{
+          margin-top: .15rem; font-size: .8rem; color: {c['ink_hover']};
+          opacity: .8;
+      }}
+    </style>
+    <div class="lad-hl">{cells}</div>
+    """)
