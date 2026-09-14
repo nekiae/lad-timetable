@@ -287,7 +287,9 @@ export function SchedulePage() {
           {selected !== null && !heat && (
             <p className="rounded-lg border border-rule bg-white p-4 text-sm text-pencil">Проверяю все клетки недели…</p>
           )}
-          {selected !== null && heat && !preview && (
+          {/* Список не прячется при наведении: иначе наведение на пункт убирает
+              сам пункт, и щелчок уходит в пустоту (найдено 14.09.2026). */}
+          {selected !== null && heat && (
             <Options heat={heat} dir={dir} current={`${lessons[selected].day}-${lessons[selected].period}`}
                      onPick={(day, period) => place(day, period)}
                      onHover={(key) => setPreview(key ? { key, verdict: heat[key] } : null)} />
@@ -339,7 +341,9 @@ function Options({ heat, dir, current, onPick, onHover }: {
           <ul className="mt-2 space-y-1">
             {options.map(([key, v]) => {
               const [day, period] = key.split("-").map(Number);
-              const note = v.gains[0]?.text ?? v.costs[0]?.text ?? "ничего не изменится";
+              // У жёлтого варианта первым — чем он хуже: ради этого завуч и смотрит.
+              const note = (v.level === "worse" ? v.costs[0]?.text : v.gains[0]?.text)
+                ?? "ничего не изменится";
               return (
                 <li key={key}>
                   <button
