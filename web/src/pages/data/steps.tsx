@@ -1,9 +1,15 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { api } from "../../api";
 import { Button, Field, Notice, inputClass } from "../../ui";
 import { DataTable, type Row } from "../../ui/DataTable";
 import type { StepProps } from "./DataPage";
+
+// «1 класс», «3 класса», «5 классов».
+const plural = (n: number, one: string, few: string, many: string) => {
+  const d = n % 10, h = n % 100;
+  return d === 1 && h !== 11 ? one : d >= 2 && d <= 4 && (h < 12 || h > 14) ? few : many;
+};
 
 const names = (rows: Row[] | undefined, key: string) =>
   (rows ?? []).map((r) => String(r[key] ?? "").trim()).filter(Boolean);
@@ -73,7 +79,7 @@ export function ClassesStep({ schoolId, doc, setRows, run }: StepProps) {
           </div>
           <Button variant="primary" className="mt-4" disabled={!total}
                   onClick={() => run(() => api.generateClasses(schoolId, counts, sizes))}>
-            {total ? `Завести ${total} классов` : "Завести классы"}
+            {total ? `Завести ${total} ${plural(total, "класс", "класса", "классов")}` : "Завести классы"}
           </Button>
         </div>
       )}
@@ -98,10 +104,24 @@ const SPECIAL = ["физика", "химия", "биология", "компью
 export function RoomsStep({ schoolId, doc, input, setRows, run }: StepProps) {
   const rows = doc.tables.rooms ?? [];
   const classes = (doc.tables.classes ?? []).length;
-  const kinds = SPECIAL.filter((k) => input.options.room_kinds.includes(k));
   const [regular, setRegular] = useState<number>();
-  const [special, setSpecial] = useState<Record<string, number>>(
-    Object.fromEntries(kinds.map((k, n) => [k, n < 6 ? 1 : 0])));
+  const [special, setSpecial] = useState<Record<string, number>>({});
+  const [suggested, setSuggested] = useState(false);
+  const [suggestFailed, setSuggestFailed] = useState(false);
+  const kinds = [...new Set([...SPECIAL, ...Object.keys(special)])]
+    .filter((k) => k !== "обычный" && input.options.room_kinds.includes(k));
+
+  // Числа — не «по одному на глаз», а посчитанные по классам и типовому плану
+  // (server/entry.py rooms_suggest): иначе путь «жму по порядку» собирал школу,
+  // где труду и информатике не хватает кабинетов, и узнавалось это только в конце.
+  useEffect(() => {
+    if (rows.length) return;
+    api.roomsSuggest(schoolId).then((s) => {
+      setRegular(s.regular);
+      setSpecial(s.special);
+      setSuggested(true);
+    }).catch(() => setSuggestFailed(true));
+  }, [schoolId, rows.length]);
 
   return (
     <div className="space-y-8">
@@ -111,6 +131,12 @@ export function RoomsStep({ schoolId, doc, input, setRows, run }: StepProps) {
       {rows.length === 0 && (
         <div>
           <p className="font-medium">Сколько кабинетов какого типа</p>
+          {suggested && (
+            <p className="mt-1 max-w-prose text-small text-pencil">
+              Числа посчитаны по вашим классам и типовому плану: столько нужно, чтобы расписание существовало.
+              Если кабинетов в школе меньше — поправьте, система скажет, чего не хватит.
+            </p>
+          )}
           <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Field label="Обычных" hint="Не меньше, чем классов: на первом уроке заняты все сразу.">
               <input type="number" min={0} max={60} className={inputClass} value={regular ?? classes}
@@ -123,9 +149,11 @@ export function RoomsStep({ schoolId, doc, input, setRows, run }: StepProps) {
               </Field>
             ))}
           </div>
-          <Button variant="primary" className="mt-4"
+          {/* Пока расчёт не пришёл, кнопка ждёт: иначе быстрый щелчок заводил одни
+              обычные кабинеты без мастерских (поймано сквозным прогоном 14.09.2026). */}
+          <Button variant="primary" className="mt-4" disabled={!suggested && !suggestFailed}
                   onClick={() => run(() => api.generateRooms(schoolId, regular ?? classes, special))}>
-            Завести кабинеты
+            {suggested || suggestFailed ? "Завести кабинеты" : "Считаю, сколько нужно кабинетов…"}
           </Button>
         </div>
       )}

@@ -81,6 +81,32 @@ def classes_generate(school_id: str, body: ClassCounts) -> dict:
     return _save(school_id, doc, tables, added=len(tables["classes"]))
 
 
+@router.get("/rooms/suggest")
+def rooms_suggest(school_id: str) -> dict:
+    """Сколько кабинетов какого типа нужно — по классам и типовому плану.
+
+    Раньше мастер предлагал по одному спецкабинету «на глаз», и путь «нажимаю
+    кнопки по порядку» собирал нерешаемую школу: черновик нагрузки делит труд
+    на мастерскую и кабинет обслуживающего труда (а его было 0), информатика
+    идёт двумя подгруппами одновременно (а компьютерный — один). Узнавал об этом
+    завуч только на «Составлении». Найдено 14.09.2026 сквозным прогоном в браузере.
+    Счёт — тот же, что строит фонд демо-школ (`demo_city._rooms_for`): по часам,
+    по пиковому дню физкультуры и по одновременным подгруппам.
+    """
+    from lad.demo_city import _rooms_for  # счёт живёт там, где его проверяли на 28 классах
+
+    doc, tables = _open(school_id)
+    if not len(tables["classes"]):
+        return {"regular": 0, "special": {}}
+    load, _ = generate_load(tables["classes"])
+    subjects = tables["subjects"] if len(tables["subjects"]) else generate_subjects(parallels_of(tables["classes"]))
+    settings = doc.get("settings") or {}
+    fund = _rooms_for(load, subjects, int(settings.get("periods", 8)), int(settings.get("days", 5)))
+    counts = fund["тип"].value_counts().to_dict() if len(fund) else {}
+    regular = int(counts.pop("обычный", len(tables["classes"])))
+    return {"regular": max(regular, len(tables["classes"])), "special": {k: int(v) for k, v in counts.items()}}
+
+
 class RoomCounts(BaseModel):
     regular: int
     special: dict[str, int] = {}

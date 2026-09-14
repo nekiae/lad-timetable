@@ -166,6 +166,8 @@ export const api = {
   input: (id: string) => call<InputState>("GET", `/schools/${id}/input`),
   generateClasses: (id: string, counts: Record<string, number>, sizes: Record<string, number>) =>
     call<Saved & { added: number }>("POST", `/schools/${id}/classes/generate`, { counts, sizes }),
+  roomsSuggest: (id: string) =>
+    call<{ regular: number; special: Record<string, number> }>("GET", `/schools/${id}/rooms/suggest`),
   generateRooms: (id: string, regular: number, special: Record<string, number>) =>
     call<Saved & { added: number }>("POST", `/schools/${id}/rooms/generate`, { regular, special }),
   subjectsFromPlan: (id: string) =>
