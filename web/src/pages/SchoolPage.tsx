@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 
-import { api, type Progress, type SearchSetup, type SolveDone } from "../api";
-import { Button, ButtonLink, Choice, Notice, Segmented } from "../ui";
+import { api, type Doc, type Progress, type SearchSetup, type SolveDone } from "../api";
+import { Button, ButtonLink, Choice, Notice, Segmented, cx } from "../ui";
 import { SearchView, type Grids } from "./SearchView";
 
 const BUDGETS = [
@@ -19,6 +19,11 @@ export function SchoolPage() {
   const navigate = useNavigate();
   const [check, setCheck] = useState<Awaited<ReturnType<typeof api.check>>>();
   const [presets, setPresets] = useState<{ name: string; about: string }[]>([]);
+  const [rules, setRules] = useState<{ key: string; title: string; source: string | null; default: string }[]>([]);
+  // Строгость норм, выбранная школой. Хранится в данных школы (settings.rules):
+  // это вход составления, как нагрузка, и должен переживать перезагрузку.
+  const [strict, setStrict] = useState<Record<string, string>>({});
+  const [doc, setDoc] = useState<Doc>();
   const [preset, setPreset] = useState("Поровну");
   const [budget, setBudget] = useState(300);
   const [job, setJob] = useState<string>();
@@ -35,7 +40,14 @@ export function SchoolPage() {
 
   useEffect(() => {
     api.check(id).then(setCheck);
-    api.rules().then((r) => setPresets(r.presets));
+    api.rules().then((r) => {
+      setPresets(r.presets);
+      setRules(r.rules);
+    });
+    api.school(id).then((s) => {
+      setDoc(s.doc);
+      setStrict((s.doc.settings.rules as Record<string, string>) ?? {});
+    });
     return () => unwatch.current?.();
   }, [id]);
 
@@ -53,7 +65,7 @@ export function SchoolPage() {
     setTimeline([]);
     setSetup(undefined);
     setGrids(undefined);
-    const { job_id } = await api.solve(id, { budget, preset });
+    const { job_id } = await api.solve(id, { budget, preset, rules: effective });
     setJob(job_id);
     unwatch.current = api.watch(
       job_id,
@@ -72,6 +84,16 @@ export function SchoolPage() {
   }
 
   const running = Boolean(job && !done);
+  const effective = Object.fromEntries(rules.map((r) => [r.key, strict[r.key] ?? r.default]));
+
+  function setRule(key: string, value: string) {
+    const next = { ...strict, [key]: value };
+    setStrict(next);
+    if (!doc) return;
+    const saved = { ...doc, settings: { ...doc.settings, rules: next } };
+    setDoc(saved);
+    api.saveSchool(id, saved).then(() => api.check(id).then(setCheck));
+  }
   // Пустая школа — не ошибка данных, а незаполненные данные: кнопка
   // «Составить» здесь бессмысленна, главное действие — пойти их вносить.
   const empty = Boolean(check && check.stats.hours === 0);
@@ -135,6 +157,49 @@ export function SchoolPage() {
         </fieldset>
       )}
 
+      {!running && check && !empty && check.pe.hours > 0 && check.pe.seats > 0 && (
+        <GymCard id={id} pe={check.pe} consecutive={effective.pe_two_days !== "hard"}
+                 onAllowConsecutive={() => setRule("pe_two_days", "soft")} />
+      )}
+
+      {!running && rules.length > 0 && !empty && (
+        <details className="mt-8 rounded-lg border border-rule bg-sheet p-4">
+          <summary className="cursor-pointer text-heading">
+            Как строго применять нормы
+            {rules.some((r) => (strict[r.key] ?? r.default) !== r.default) && (
+              <span className="ml-2 text-small font-normal text-worse">изменено школой</span>
+            )}
+          </summary>
+          <p className="mt-2 max-w-prose text-small text-pencil">
+            «Жёстко» — так не поставится никогда. «Мягко» — поставится, только если иначе расписание не
+            складывается, и каждый такой случай будет в отчёте. «Не учитывать» — норма выключена.
+          </p>
+          <ul className="mt-4 divide-y divide-rule">
+            {rules.map((rule) => (
+              <li key={rule.key} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                <span className="min-w-0">
+                  <span className="block font-medium">{rule.title}</span>
+                  {rule.source && <span className="block text-small text-pencil">{rule.source}</span>}
+                </span>
+                <span className="inline-flex shrink-0 rounded border border-rule bg-sheet p-0.5" role="group"
+                      aria-label={rule.title}>
+                  {STRICTNESS.map(([value, label]) => {
+                    const on = (strict[rule.key] ?? rule.default) === value;
+                    return (
+                      <button key={value} type="button" aria-pressed={on} onClick={() => setRule(rule.key, value)}
+                              className={cx("rounded-[4px] px-3 py-1 text-small font-medium transition-colors duration-150",
+                                            on ? "bg-pen text-white" : "text-ink hover:bg-paper")}>
+                        {label}
+                      </button>
+                    );
+                  })}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+
       <div className={running ? "mt-4" : "mt-8"}>
         {empty ? null : !running ? (
           <Button variant="primary" size="lg" disabled={blocked || !check} onClick={start}>
@@ -170,5 +235,66 @@ export function SchoolPage() {
         </Notice>
       )}
     </div>
+  );
+}
+
+const STRICTNESS: [string, string][] = [["hard", "Жёстко"], ["soft", "Мягко"], ["off", "Не учитывать"]];
+
+// «1 урок», «3 урока», «72 урока», «5 уроков».
+const plural = (n: number, one: string, few: string, many: string) => {
+  const d = n % 10, h = n % 100;
+  return d === 1 && h !== 11 ? one : d >= 2 && d <= 4 && (h < 12 || h > 14) ? few : many;
+};
+
+// Спортзалы — самое тесное место школы. Физкультуру нельзя два дня подряд
+// (п. 94 ССЭТ), поэтому при трёх часах она встаёт только в пн/ср/пт — и зал
+// бывает забит с первого урока до последнего. Тогда в эти дни классы учатся
+// до 8-го урока, а во вторник и четверг — по 5: дни неровные не по вине
+// алгоритма, а по арифметике залов (замер 14.09.2026). Здесь эта арифметика
+// показана завучу вместе с двумя рычагами, которыми школы и пользуются.
+function GymCard({ id, pe, consecutive, onAllowConsecutive }: {
+  id: string;
+  pe: { hours: number; gyms: number; seats: number; periods: number; days: number };
+  consecutive: boolean;
+  onAllowConsecutive: () => void;
+}) {
+  const days = consecutive ? pe.days : Math.ceil(pe.days / 2);
+  const places = pe.seats * pe.periods * days;
+  const load = places ? pe.hours / places : 1;
+  const tight = load >= 0.9;
+  return (
+    <section className={cx("mt-8 rounded-lg border p-4", tight ? "border-worse/30 bg-worse-soft" : "border-rule bg-sheet")}>
+      <p className="text-heading">{tight ? "Спортзалы заняты почти полностью" : "Спортзалы"}</p>
+      <p className="mt-1 max-w-prose">
+        Физкультура: {pe.hours} {plural(pe.hours, "урок", "урока", "уроков")} в неделю. В залах одновременно
+        занимаются {pe.seats} {plural(pe.seats, "класс", "класса", "классов")}.{" "}
+        {consecutive
+          ? `Физкультура может стоять в любой из ${pe.days} ${plural(pe.days, "дня", "дней", "дней")} — это ${places} ${plural(places, "место", "места", "мест")}.`
+          : `Без двух дней подряд она встаёт в ${days} ${plural(days, "день", "дня", "дней")} — это ${places} ${plural(places, "место", "места", "мест")}.`}{" "}
+        Занято <span className="font-semibold">{Math.round(load * 100)}%</span>.
+      </p>
+      {tight && (
+        <p className="mt-2 max-w-prose text-small">
+          Поэтому дни у классов выходят неровными: в дни физкультуры залы заняты с первого урока до последнего,
+          и часть классов учится до {pe.periods}-го урока, а в остальные дни — по 5.
+        </p>
+      )}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Link to={`/s/${id}/data?step=rooms`}
+              className="inline-flex items-center rounded border border-rule bg-sheet px-3 py-1.5 text-small font-medium hover:border-pencil">
+          Изменить вместимость залов
+        </Link>
+        {tight && !consecutive && (
+          <Button onClick={onAllowConsecutive} className="!px-3 !py-1.5 text-small">
+            Разрешить два дня подряд, когда иначе нельзя
+          </Button>
+        )}
+      </div>
+      {consecutive && (
+        <p className="mt-2 text-small text-pencil">
+          Физкультура два дня подряд разрешена «мягко»: система поставит так, только если иначе нельзя, и покажет каждый случай.
+        </p>
+      )}
+    </section>
   );
 }

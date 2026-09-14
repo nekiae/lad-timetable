@@ -178,8 +178,13 @@ export const api = {
   school: (id: string) => call<{ id: string; revision: number; doc: Doc }>("GET", `/schools/${id}`),
   saveSchool: (id: string, doc: Doc) => call<{ revision: number }>("PUT", `/schools/${id}`, doc),
   check: (id: string) =>
-    call<{ problems: string[]; warnings: string[]; stats: Record<string, number> }>(
-      "GET", `/schools/${id}/check`),
+    call<{
+      problems: string[];
+      warnings: string[];
+      stats: Record<string, number>;
+      /** Спортзалы: уроков физкультуры в неделю и мест в залах за один урок. */
+      pe: { hours: number; gyms: number; seats: number; periods: number; days: number };
+    }>("GET", `/schools/${id}/check`),
   input: (id: string) => call<InputState>("GET", `/schools/${id}/input`),
   generateClasses: (id: string, counts: Record<string, number>, sizes: Record<string, number>) =>
     call<Saved & { added: number }>("POST", `/schools/${id}/classes/generate`, { counts, sizes }),

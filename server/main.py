@@ -156,12 +156,26 @@ def check_input(school_id: str) -> dict:
     """Проверки до запуска: ошибки ввода и предупреждения по нормам."""
     doc, _ = _load(school_id)
     school, problems = _build(doc)
+    # Спортзалы — самое тесное место школы (замер 14.09.2026: 72 урока физкультуры
+    # на 72 места в пн/ср/пт). Отдаём сырые цифры, а загрузку считает экран:
+    # она зависит от того, разрешена ли физкультура два дня подряд.
+    subject_names = {s.id: s.name for s in school.subjects}
+    gyms = [r for r in school.rooms if r.kind.value == "gym"]
+    pe = {
+        "hours": sum(i.hours_per_week for i in school.load
+                     if school.norms.is_pe(subject_names.get(i.subject_id, ""))),
+        "gyms": len(gyms),
+        "seats": sum(max(1, r.parallel_classes) for r in gyms),
+        "periods": school.periods_per_day,
+        "days": sum(1 for kind in school.day_kinds.values() if kind.value == "lessons"),
+    }
     return {
         "problems": problems,
         "warnings": [] if problems else check_norms(school),
         "stats": {"classes": len(school.classes), "teachers": len(school.teachers),
                   "rooms": len(school.rooms),
                   "hours": sum(item.hours_per_week for item in school.load)},
+        "pe": pe,
     }
 
 
