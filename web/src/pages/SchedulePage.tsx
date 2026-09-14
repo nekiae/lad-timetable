@@ -214,6 +214,18 @@ export function SchedulePage() {
         </div>
       </header>
 
+      {/* Нормы, которые в этих данных выполнить физически нельзя (у 11А 4 часа
+          физкультуры — без соседних дней их не расставить). Солвер ослабляет их
+          только для этого класса и говорит, что поменять во вводе. Без этой плашки
+          завуч видит «нарушений: 2» и не знает, что это не сбой и как это исправить. */}
+      {schedule.meta.relaxed && schedule.meta.relaxed.length > 0 && history.length === 0 && (
+        <Notice tone="worse" className="mt-4" title="Нормы, которые в ваших данных выполнить нельзя">
+          <ul className="list-disc space-y-1 pl-5">
+            {schedule.meta.relaxed.map((line) => <li key={line}>{line}</li>)}
+          </ul>
+        </Notice>
+      )}
+
       {schedule.stale && (
         <Notice tone="worse" className="mt-4">
           Данные школы изменились после составления. Сетка ниже — по прежним данным.
