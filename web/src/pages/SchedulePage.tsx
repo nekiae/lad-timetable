@@ -288,12 +288,9 @@ export function SchedulePage() {
             <p className="rounded-lg border border-rule bg-white p-4 text-sm text-pencil">Проверяю все клетки недели…</p>
           )}
           {selected !== null && heat && !preview && (
-            <p className="rounded-lg border border-rule bg-white p-4 text-sm">
-              Можно: {Object.values(heat).filter((v) => v.level === "ok").length}, хуже:{" "}
-              {Object.values(heat).filter((v) => v.level === "worse").length}, нельзя:{" "}
-              {Object.values(heat).filter((v) => v.level === "no").length}. Наведите на клетку,
-              чтобы узнать почему.
-            </p>
+            <Options heat={heat} dir={dir} current={`${lessons[selected].day}-${lessons[selected].period}`}
+                     onPick={(day, period) => place(day, period)}
+                     onHover={(key) => setPreview(key ? { key, verdict: heat[key] } : null)} />
           )}
           {shown && <VerdictCard verdict={shown} applied={!preview && last === shown} />}
           {report && report.violations.length > 0 && (
@@ -308,6 +305,59 @@ export function SchedulePage() {
           )}
         </aside>
       </div>
+    </div>
+  );
+}
+
+// Куда можно поставить — списком. На плотной сетке годных клеток обычно
+// три-пять из сорока, и искать их прокруткой по подсветке утомительно.
+// Сначала те, что улучшают сетку, потом нейтральные, потом «хуже».
+function Options({ heat, dir, current, onPick, onHover }: {
+  heat: Record<string, Verdict>;
+  dir: Directory;
+  current: string;
+  onPick: (day: number, period: number) => void;
+  onHover: (key: string | null) => void;
+}) {
+  const rank = (v: Verdict) => (v.level === "ok" ? (v.gains.length ? 0 : 1) : 2);
+  const options = Object.entries(heat)
+    .filter(([key, v]) => key !== current && v.level !== "no")
+    .sort(([, a], [, b]) => rank(a) - rank(b));
+  const blocked = Object.values(heat).filter((v) => v.level === "no").length;
+  const dayName = (n: number) => dir.days.find((d) => d.n === n)?.name ?? String(n);
+
+  return (
+    <div className="rounded-lg border border-rule bg-white p-4 text-sm">
+      {options.length === 0 ? (
+        <p>
+          Этот урок некуда переставить без нарушений: все {blocked} клеток недели заняты
+          запретами. Наведите на красную клетку, чтобы узнать, что мешает.
+        </p>
+      ) : (
+        <>
+          <p className="font-medium">Куда можно поставить</p>
+          <ul className="mt-2 space-y-1">
+            {options.map(([key, v]) => {
+              const [day, period] = key.split("-").map(Number);
+              const note = v.gains[0]?.text ?? v.costs[0]?.text ?? "ничего не изменится";
+              return (
+                <li key={key}>
+                  <button
+                    className={`w-full rounded-md border px-3 py-2 text-left hover:border-pen ${
+                      v.level === "ok" ? "border-ok/30 bg-ok-soft" : "border-warn/30 bg-warn-soft"}`}
+                    onMouseEnter={() => onHover(key)} onMouseLeave={() => onHover(null)}
+                    onFocus={() => onHover(key)} onBlur={() => onHover(null)}
+                    onClick={() => onPick(day, period)}>
+                    <span className="font-medium">{dayName(day)}, {period}-й урок</span>
+                    <span className="block text-ink/70">{note}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          <p className="mt-3 text-pencil">Ещё {blocked} клеток — нельзя. Наведите на красную, чтобы узнать почему.</p>
+        </>
+      )}
     </div>
   );
 }
