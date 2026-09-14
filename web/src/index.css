@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-feature-settings: "tnum" 1;
+  }
+  body {
+    @apply bg-paper text-ink antialiased;
+    font-size: 15px;
+    line-height: 1.5;
+  }
+  :focus-visible {
+    outline: 2px solid theme("colors.pen.DEFAULT");
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 font-medium
+           transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-pen text-white hover:bg-[#1B3990];
+  }
+  .btn-quiet {
+    @apply btn border border-rule bg-white text-ink hover:border-pencil;
+  }
+  /* Тетрадная клетка — фон рабочей области. Шаг 24px, как у школьной тетради
+     в масштабе экрана; линии почти не видны и не спорят с данными. */
+  .notebook {
+    background-color: theme("colors.paper");
+    background-image:
+      linear-gradient(theme("colors.rule / 45%") 1px, transparent 1px),
+      linear-gradient(90deg, theme("colors.rule / 45%") 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
