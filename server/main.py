@@ -93,6 +93,10 @@ class NewSchool(BaseModel):
 def create_school(body: NewSchool) -> dict:
     if body.from_example:
         doc = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+        # Пример открывает любой, у кого есть ссылка, — это показ третьим лицам
+        # (CLAUDE.md §8.4). Нагрузка настоящая, ФИО учителей в файле уже
+        # вымышленные (demo_city._names), а название школы — настоящее: убираем.
+        doc.setdefault("settings", {})["name"] = "Средняя школа на 24 класса (пример)"
     else:
         doc = {"tables": {}, "settings": {"periods": 8, "days": 5, "sixth_day": True},
                "wishes": {}}
