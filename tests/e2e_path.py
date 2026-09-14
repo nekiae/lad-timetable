@@ -28,6 +28,7 @@ TEACHERS = ["Алексеева А. А.", "Борисов Б. Б.", "Васил�
             "Лебедева Л. Л.", "Морозов М. М."]
 
 console, bad = [], []
+passed = False
 t0 = time.monotonic()
 
 
@@ -167,6 +168,7 @@ with sync_playwright() as p:
             page.get_by_role("button", name="Скачать в Excel").click()
         log(f"Excel скачан: {dl.value.suggested_filename}")
         print(f"\nOK: путь пройден целиком (скриншоты: {SHOTS}-*.png)")
+        passed = True
     except Exception as error:  # noqa: BLE001
         page.screenshot(path=f"{SHOTS}-fail.png", full_page=True)
         print(f"\nFAIL: {type(error).__name__}: {str(error)[:600]}\nURL: {page.url}")
@@ -174,4 +176,6 @@ with sync_playwright() as p:
         print("console errors:", console[:10])
         print("responses >= 400:", bad[:10])
         browser.close()
-        failed = "FAIL" in globals().get("_status", "")
+
+# Код выхода — чтобы проверку перед показом можно было запускать одной командой.
+sys.exit(0 if passed and not console and not bad else 1)
