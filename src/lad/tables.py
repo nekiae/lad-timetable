@@ -331,11 +331,20 @@ def build_school(tables: dict[str, pd.DataFrame], settings: dict,
     # Группы генерируются из нагрузки: пустая «подгруппа» = весь класс.
     groups: dict[str, StudyGroup] = {}
     load: list[LoadItem] = []
+    # Строка без учителя — это НЕ пустая строка, и молча её пропускать нельзя.
+    # Раньше пропускали: школа, где часть нагрузки ещё не назначена, получала
+    # расписание без этих уроков, а проверка говорила «всё в порядке».
+    # Найдено 14.09.2026 при переносе ввода в веб-приложение.
+    unassigned: list[str] = []
     for n, row in tables["load"].iterrows():
-        class_name = str(row["класс"]).strip()
-        subject_name = str(row["предмет"]).strip()
-        teacher_name = str(row["учитель"]).strip()
-        if not (class_name and subject_name and teacher_name):
+        class_name = optional(row["класс"])
+        subject_name = optional(row["предмет"])
+        teacher_name = optional(row["учитель"])
+        if not (class_name and subject_name):
+            continue  # пустая строка таблицы
+        if not teacher_name:
+            part = optional(row.get("подгруппа"))
+            unassigned.append(f"{class_name}{f' ({part})' if part else ''} «{subject_name}»")
             continue
         if class_name not in class_ids:
             problems.append(f"строка нагрузки {n + 1}: класс «{class_name}» не заведён")
@@ -377,6 +386,12 @@ def build_school(tables: dict[str, pd.DataFrame], settings: dict,
     day_kinds = {d: DayKind.LESSONS for d in range(1, lesson_days + 1)}
     if settings.get("sixth_day", True):
         day_kinds[6] = DayKind.SIXTH_DAY
+
+    if unassigned:
+        problems.append(
+            f"строк нагрузки без учителя: {len(unassigned)} — " + ", ".join(unassigned[:8])
+            + (" и другие" if len(unassigned) > 8 else "")
+            + ". Назначьте учителей — иначе эти уроки не попадут в расписание.")
 
     school = School(
         name=settings.get("name", "Школа"), classes=classes, groups=list(groups.values()),
