@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { api } from "../api";
+import { Button } from "../ui";
 
 // Первый экран. Человек пришёл, чтобы получить расписание своей школы,
 // поэтому здесь два действия: открыть свою или посмотреть на примере.
@@ -21,32 +22,33 @@ export function SchoolsPage() {
   }
 
   return (
-    <div className="notebook min-h-screen px-4 py-16">
-      <div className="mx-auto max-w-2xl">
-        <h1 className="text-5xl font-bold tracking-tight">ЛАД</h1>
-        <p className="mt-4 max-w-xl text-lg text-ink/80">
+    <div className="min-h-screen px-4 py-16 md:px-8 md:py-24">
+      <div className="mx-auto max-w-3xl">
+        <h1 className="text-[44px] font-semibold leading-[48px] tracking-tight">ЛАД</h1>
+        <p className="mt-4 max-w-prose text-heading font-normal text-ink/85">
           Расписание школы по санитарным нормам Республики Беларусь. Вносите нагрузку —
           система составляет сетку без окон у классов и объясняет каждое своё решение.
         </p>
 
         <div className="mt-8 flex flex-wrap gap-3">
-          <button className="btn-primary" disabled={busy} onClick={() => create(false)}>
+          <Button variant="primary" size="lg" disabled={busy} onClick={() => create(false)}>
             Внести свою школу
-          </button>
-          <button className="btn-quiet" disabled={busy} onClick={() => create(true)}>
+          </Button>
+          <Button size="lg" disabled={busy} onClick={() => create(true)}>
             Открыть пример на 24 класса
-          </button>
+          </Button>
         </div>
 
         {schools && schools.length > 0 && (
-          <section className="mt-14">
-            <h2 className="mb-3 text-sm font-medium text-pencil">Ваши школы</h2>
-            <ul className="divide-y divide-rule rounded-lg border border-rule bg-white">
+          <section className="mt-16">
+            <h2 className="mb-3 text-heading">Ваши школы</h2>
+            <ul className="divide-y divide-rule rounded-lg border border-rule bg-sheet">
               {schools.map((s) => (
                 <li key={s.id}>
-                  <Link to={`/s/${s.id}`} className="flex items-baseline justify-between px-4 py-3 hover:bg-paper">
+                  <Link to={`/s/${s.id}`}
+                        className="flex flex-wrap items-baseline justify-between gap-x-4 px-4 py-3 transition-colors duration-150 hover:bg-paper">
                     <span className="font-medium">{s.name}</span>
-                    <span className="text-sm text-pencil">
+                    <span className="text-small text-pencil">
                       изменено {new Date(s.updated_at * 1000).toLocaleString("ru-RU", {
                         day: "numeric", month: "long", hour: "2-digit", minute: "2-digit",
                       })}

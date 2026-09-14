@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 
 import { api, type Directory, type LessonDTO, type Report, type Schedule, type Verdict } from "../api";
+import { Button, ButtonLink, EmptyState, Notice, Panel, Reasons, cx } from "../ui";
 
 // Короткие названия для клетки сетки: полное «Физическая культура и здоровье»
 // в клетку шириной в класс не помещается. Полное — в подсказке.
@@ -13,13 +14,13 @@ const SHORT: Record<string, string> = {
   "Иностранный язык": "Ин. яз.",
   "Математика": "Матем.",
   "Алгебра": "Алгебра",
-  "Геометрия": "Геометр.",
+  "Геометрия": "Геометрия",
   "Информатика": "Информ.",
   "Всемирная история": "Всем. ист.",
   "История Беларуси": "Ист. Бел.",
   "Обществоведение": "Общество",
-  "География": "Геогр.",
-  "Биология": "Биол.",
+  "География": "География",
+  "Биология": "Биология",
   "Физика": "Физика",
   "Химия": "Химия",
   "Астрономия": "Астрон.",
@@ -53,10 +54,12 @@ function buildGrid(dir: Directory, lessons: LessonDTO[]) {
   return grid;
 }
 
+// Подсветка клеток при правке — единственное место, где интерфейс
+// позволяет себе цвет крупно (docs/DESIGN.md §2.1).
 const TINT: Record<Verdict["level"], string> = {
   ok: "bg-ok-soft",
-  worse: "bg-warn-soft",
-  no: "bg-red-soft/60",
+  worse: "bg-worse-soft",
+  no: "bg-no-soft/70",
 };
 
 type Snapshot = { lessons: LessonDTO[]; report: Report | null };
@@ -96,13 +99,11 @@ export function SchedulePage() {
   const dir = schedule?.directory;
   const grid = useMemo(() => (dir ? buildGrid(dir, lessons) : new Map<string, number[]>()), [dir, lessons]);
 
-  if (schedule === undefined) return <p className="p-10 text-pencil">Загружаю расписание…</p>;
+  if (schedule === undefined) return <p className="px-4 py-10 text-pencil md:px-8">Загружаю расписание…</p>;
   if (schedule === null || !dir)
     return (
-      <div className="p-10">
-        <p className="text-lg">Расписание ещё не составлено.</p>
-        <Link to={`/s/${id}`} className="btn-primary mt-4">Перейти к составлению</Link>
-      </div>
+      <EmptyState text="Расписание ещё не составлено."
+                  action={<ButtonLink to={`/s/${id}`} variant="primary">Перейти к составлению</ButtonLink>} />
     );
 
   const teacherIndex = new Map(Object.keys(dir.teachers).map((t, i) => [t, i + 1]));
@@ -163,63 +164,65 @@ export function SchedulePage() {
   }
 
   const shown = preview ? { verdict: preview.verdict, applied: false } : last;
+  const dayBorder = (period: number) => (period === 1 ? "border-t-2 border-t-ink/20" : "border-t border-t-rule");
 
   return (
-    <div className="px-4 py-8 md:px-8">
+    <div className="px-4 py-6 md:px-8">
       <header className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Расписание</h1>
+        <div className="min-w-0">
+          <h1 className="text-title">Расписание</h1>
           {report && (
-            <p className="mt-2 max-w-3xl text-lg">
+            <p className="mt-1 max-w-4xl">
               {schedule.meta.status !== "EDITED" && history.length === 0 && (
-                <>Составлено за {seconds >= 90 ? `${Math.round(seconds / 60)} мин` : `${Math.round(seconds)} с`}. </>
+                <span className="text-pencil">
+                  Составлено за {seconds >= 90 ? `${Math.round(seconds / 60)} мин` : `${Math.round(seconds)} с`}.{" "}
+                </span>
               )}
-              <span className={report.norm_violations ? "font-semibold text-red-pen" : ""}>
+              <span className={report.norm_violations ? "font-semibold text-no" : ""}>
                 {report.norm_violations === 0
                   ? "Санитарные нормы соблюдены полностью."
                   : `Нарушений санитарных норм: ${report.norm_violations}.`}
               </span>{" "}
               Окон у учителей за неделю: {report.teacher_gaps}.{" "}
               {report.structural_violations > 0
-                ? <span className="font-semibold text-red-pen">Конфликтов в сетке: {report.structural_violations}.</span>
+                ? <span className="font-semibold text-no">Конфликтов в сетке: {report.structural_violations}.</span>
                 : "Конфликтов нет."}
             </p>
           )}
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <label className="flex cursor-pointer items-center gap-2 text-sm">
-            <input type="checkbox" checked={hideNames} onChange={(e) => setHideNames(e.target.checked)} />
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="mr-2 flex cursor-pointer items-center gap-2 text-small">
+            <input type="checkbox" className="accent-pen" checked={hideNames}
+                   onChange={(e) => setHideNames(e.target.checked)} />
             Скрыть ФИО учителей
           </label>
-          <button className="btn-quiet" disabled={!history.length} onClick={undo}>
-            Отменить ход
-          </button>
-          <button className="btn-quiet" disabled={!history.length || saved === "saving"} onClick={save}>
+          <Button disabled={!history.length} onClick={undo}>Отменить ход</Button>
+          <Button variant={history.length ? "primary" : "quiet"}
+                  disabled={!history.length || saved === "saving"} onClick={save}>
             {saved === "saved" ? "Версия сохранена" : "Сохранить версию"}
-          </button>
-          <button className="btn-quiet" onClick={() => api.exportXlsx(id, lessons, hideNames)}>
-            Скачать Excel
-          </button>
+          </Button>
+          <Button onClick={() => api.exportXlsx(id, lessons, hideNames)}>Скачать Excel</Button>
         </div>
       </header>
 
       {schedule.stale && (
-        <p className="mt-4 rounded-md border border-warn/30 bg-warn-soft px-4 py-2 text-sm">
+        <Notice tone="worse" className="mt-4">
           Данные школы изменились после составления. Сетка ниже — по прежним данным.
-        </p>
+        </Notice>
       )}
 
-      <div className="mt-6 flex gap-6 max-lg:flex-col">
-        <div className="min-w-0 flex-1 overflow-auto rounded-lg border border-rule bg-white"
-             style={{ maxHeight: "calc(100vh - 200px)" }}>
-          <table className="border-separate border-spacing-0 text-[13px] leading-tight">
+      <div className="mt-5 flex gap-6 max-lg:flex-col">
+        <div className="min-w-0 flex-1 overflow-auto rounded-lg border border-rule bg-sheet"
+             style={{ maxHeight: "calc(100vh - 180px)" }}>
+          <table className="border-separate border-spacing-0 font-narrow text-cell">
             <thead>
               <tr>
-                <th className="sticky left-0 top-0 z-30 border-b border-r border-rule bg-paper px-2 py-2" />
+                <th className="sticky left-0 top-0 z-30 border-b border-r border-rule bg-paper" />
                 {dir.classes.map((c) => (
-                  <th key={c.id}
-                      className={`sticky top-0 z-20 min-w-[92px] border-b border-r border-rule px-2 py-2 text-left font-semibold ${
-                        selectedClasses.has(c.id) ? "bg-pen-soft text-pen" : "bg-paper"}`}>
+                  <th key={c.id} scope="col"
+                      className={cx(
+                        "sticky top-0 z-20 min-w-[88px] border-b border-r border-rule px-2 py-2 text-left text-small font-semibold",
+                        selectedClasses.has(c.id) ? "bg-pen-soft text-pen" : "bg-paper")}>
                     {c.name}
                   </th>
                 ))}
@@ -232,9 +235,10 @@ export function SchedulePage() {
                   const verdict = heat?.[key];
                   return (
                     <tr key={key}>
-                      <th className={`sticky left-0 z-10 whitespace-nowrap border-r border-rule bg-paper px-2 text-left font-normal ${
-                        period === 1 ? "border-t-2 border-t-ink/25" : "border-t border-t-rule"}`}>
-                        {period === 1 && <span className="mr-2 font-semibold">{day.name.slice(0, 2)}</span>}
+                      <th scope="row"
+                          className={cx("sticky left-0 z-10 w-12 whitespace-nowrap border-r border-rule bg-paper px-2 text-left font-normal",
+                                        dayBorder(period))}>
+                        {period === 1 && <span className="mr-1.5 font-semibold">{day.name.slice(0, 2)}</span>}
                         <span className="text-pencil">{period}</span>
                       </th>
                       {dir.classes.map((c) => {
@@ -249,10 +253,11 @@ export function SchedulePage() {
                                 if (target && !isSource) place(day.n, period);
                                 else if (cell.length) pick(cell[0]);
                               }}
-                              className={`h-11 cursor-pointer border-r border-rule px-1.5 align-top ${
-                                period === 1 ? "border-t-2 border-t-ink/25" : "border-t border-t-rule"} ${
-                                isSource ? "outline outline-2 -outline-offset-2 outline-pen" : ""} ${
-                                target ? TINT[verdict.level] : "hover:bg-paper"}`}>
+                              className={cx(
+                                "h-11 cursor-pointer border-r border-rule px-1.5 align-top",
+                                dayBorder(period),
+                                isSource && "outline outline-2 -outline-offset-2 outline-pen",
+                                target ? TINT[verdict.level] : "hover:bg-paper")}>
                             {cell.map((i) => {
                               const l = lessons[i];
                               const part = dir.groups[l.group_id]?.part;
@@ -261,7 +266,7 @@ export function SchedulePage() {
                                 <div key={i} className="py-0.5"
                                      title={`${subject}${part ? `, ${part} гр.` : ""}\n${dir.teachers[l.teacher_id] ?? ""}${l.room_id ? `\nкаб. ${l.room_id}` : ""}`}>
                                   <div className="font-medium">{short(subject)}{part ? ` (${part})` : ""}</div>
-                                  <div className="text-[11px] text-pencil">{teacherName(l.teacher_id)}</div>
+                                  <div className="text-pencil">{teacherName(l.teacher_id)}</div>
                                 </div>
                               );
                             })}
@@ -276,19 +281,20 @@ export function SchedulePage() {
           </table>
         </div>
 
-        <aside className="w-full shrink-0 lg:w-80" aria-live="polite">
+        {/* Поля: здесь объяснения, как замечания учителя на полях тетради. */}
+        <aside className="w-full shrink-0 space-y-4 lg:w-80" aria-live="polite">
           {selected === null && !shown && (
-            <div className="rounded-lg border border-rule bg-white p-4 text-sm leading-relaxed">
-              <p className="font-medium">Как поправить руками</p>
+            <Panel as="div" className="text-small">
+              <p className="text-heading">Как поправить руками</p>
               <p className="mt-2 text-ink/80">
                 Щёлкните урок. Клетки его класса подсветятся: зелёные — можно поставить,
                 жёлтые — можно, но станет хуже, красные — нельзя. Щелчок по клетке меняет
                 уроки местами.
               </p>
-            </div>
+            </Panel>
           )}
           {selected !== null && !heat && (
-            <p className="rounded-lg border border-rule bg-white p-4 text-sm text-pencil">Проверяю все клетки недели…</p>
+            <Panel as="div" className="text-small text-pencil">Проверяю все клетки недели…</Panel>
           )}
           {/* Список не прячется при наведении: иначе наведение на пункт убирает
               сам пункт, и щелчок уходит в пустоту (найдено 14.09.2026). */}
@@ -299,8 +305,8 @@ export function SchedulePage() {
           )}
           {shown && <VerdictCard verdict={shown.verdict} applied={shown.applied} />}
           {report && report.violations.length > 0 && (
-            <details className="mt-4 rounded-lg border border-red-pen/30 bg-white p-4 text-sm">
-              <summary className="cursor-pointer font-medium text-red-pen">
+            <details className="rounded-lg border border-no/30 bg-sheet p-4 text-small">
+              <summary className="cursor-pointer font-semibold text-no">
                 Что нарушено в сетке ({report.violations.length})
               </summary>
               <ul className="mt-2 space-y-1">
@@ -339,7 +345,7 @@ function Options({ heat, dir, lessons, current, onPick, onHover }: {
   const dayName = (n: number) => dir.days.find((d) => d.n === n)?.name ?? String(n);
 
   return (
-    <div className="rounded-lg border border-rule bg-white p-4 text-sm">
+    <Panel as="div" className="text-small">
       {options.length === 0 ? (
         <p>
           Этот урок некуда переставить без нарушений: все {blocked} клеток недели заняты
@@ -347,8 +353,8 @@ function Options({ heat, dir, lessons, current, onPick, onHover }: {
         </p>
       ) : (
         <>
-          <p className="font-medium">Куда можно поставить</p>
-          <ul className="mt-2 space-y-1">
+          <p className="text-heading">Куда можно поставить</p>
+          <ul className="mt-2 space-y-1.5">
             {options.map(([key, v]) => {
               const [day, period] = key.split("-").map(Number);
               // У жёлтого варианта первым — чем он хуже: ради этого завуч и смотрит.
@@ -357,13 +363,15 @@ function Options({ heat, dir, lessons, current, onPick, onHover }: {
               return (
                 <li key={key}>
                   <button
-                    className={`w-full rounded-md border px-3 py-2 text-left hover:border-pen ${
-                      v.level === "ok" ? "border-ok/30 bg-ok-soft" : "border-warn/30 bg-warn-soft"}`}
+                    type="button"
+                    className={cx(
+                      "w-full rounded border px-3 py-2 text-left transition-colors duration-150 hover:border-pen",
+                      v.level === "ok" ? "border-ok/30 bg-ok-soft" : "border-worse/30 bg-worse-soft")}
                     onMouseEnter={() => onHover(key)} onMouseLeave={() => onHover(null)}
                     onFocus={() => onHover(key)} onBlur={() => onHover(null)}
                     onClick={() => onPick(day, period)}>
                     <span className="font-medium">{dayName(day)}, {period}-й урок</span>
-                    <span className="block text-ink/70">{note}</span>
+                    <span className="block text-ink/75">{note}</span>
                   </button>
                 </li>
               );
@@ -372,7 +380,7 @@ function Options({ heat, dir, lessons, current, onPick, onHover }: {
           <p className="mt-3 text-pencil">Ещё {blocked} клеток — нельзя. Наведите на красную, чтобы узнать почему.</p>
         </>
       )}
-    </div>
+    </Panel>
   );
 }
 
@@ -380,32 +388,16 @@ function VerdictCard({ verdict, applied }: { verdict: Verdict; applied: boolean 
   const title = applied
     ? "Уроки поменялись местами"
     : verdict.level === "no" ? "Сюда нельзя" : verdict.level === "worse" ? "Можно, но станет хуже" : "Можно";
-  const tone = verdict.level === "no" ? "border-red-pen/40" : verdict.level === "worse" ? "border-warn/40" : "border-ok/40";
+  const tone = verdict.level === "no" ? "border-no/50" : verdict.level === "worse" ? "border-worse/40" : "border-ok/40";
   return (
-    <div className={`rounded-lg border-2 bg-white p-4 text-sm ${tone}`}>
-      <p className={`font-semibold ${verdict.level === "no" ? "text-red-pen" : ""}`}>{title}</p>
-      {verdict.blocking.length > 0 && (
-        <ul className="mt-2 space-y-1.5">
-          {verdict.blocking.map((r, i) => (
-            <li key={i}>
-              {r.text}
-              {r.source && <span className="text-pencil"> — {r.source} № 525</span>}
-            </li>
-          ))}
-        </ul>
-      )}
-      {verdict.costs.length > 0 && (
-        <ul className="mt-2 space-y-1 text-warn">
-          {verdict.costs.map((r, i) => <li key={i}>{r.text}</li>)}
-        </ul>
-      )}
-      {verdict.gains.length > 0 && (
-        <ul className="mt-2 space-y-1 text-ok">
-          {verdict.gains.map((r, i) => <li key={i}>{r.text}</li>)}
-        </ul>
-      )}
+    <div className={cx("rounded-lg border-2 bg-sheet p-4 text-small", tone)}>
+      <p className={cx("text-heading", verdict.level === "no" && "text-no")}>{title}</p>
+      <Reasons tone="no" items={verdict.blocking.map((r) => ({
+        text: r.text, source: r.source ? `${r.source} № 525` : null }))} />
+      <Reasons tone="worse" items={verdict.costs} />
+      <Reasons tone="ok" items={verdict.gains} />
       {verdict.level === "ok" && !verdict.costs.length && !verdict.gains.length && !applied && (
-        <p className="mt-1 text-ink/70">Ничего не нарушится, метрики не изменятся.</p>
+        <p className="mt-1 text-pencil">Ничего не нарушится, метрики не изменятся.</p>
       )}
     </div>
   );

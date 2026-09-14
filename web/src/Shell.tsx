@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useParams } from "react-router-dom";
 
 import { api } from "./api";
+import { cx } from "./ui";
 
-// Оболочка школы: слева — где я и куда можно пойти, справа — работа.
-// Разделов немного, и они идут в порядке работы завуча, поэтому это
-// простой список, а не меню с иконками.
+// Шапка школы сверху, а не боковое меню: сетка на 24 класса шире любого
+// экрана, и каждый пиксель ширины отдан ей (docs/DESIGN.md §6).
+// Разделы идут в порядке работы завуча.
 export function Shell() {
   const { id = "" } = useParams();
   const [name, setName] = useState("");
@@ -14,25 +15,24 @@ export function Shell() {
     api.school(id).then((s) => setName(String(s.doc.settings.name || "Школа без названия")));
   }, [id]);
 
-  const item = ({ isActive }: { isActive: boolean }) =>
-    `block rounded-md px-3 py-2 ${isActive ? "bg-pen-soft font-medium text-pen" : "text-ink hover:bg-white"}`;
+  const tab = ({ isActive }: { isActive: boolean }) =>
+    cx("flex h-14 items-center border-b-2 px-1 font-medium transition-colors duration-150",
+       isActive ? "border-pen text-pen" : "border-transparent text-pencil hover:text-ink");
 
   return (
-    <div className="flex min-h-screen">
-      <aside className="flex w-60 shrink-0 flex-col border-r border-rule bg-paper px-4 py-5 max-md:hidden">
-        <Link to="/" className="mb-6 text-2xl font-bold tracking-tight text-ink">
-          ЛАД
-        </Link>
-        <p className="mb-4 text-sm leading-snug text-pencil">{name}</p>
-        <nav className="space-y-1">
-          <NavLink to={`/s/${id}`} end className={item}>
-            Школа и составление
-          </NavLink>
-          <NavLink to={`/s/${id}/schedule`} className={item}>
-            Расписание
-          </NavLink>
-        </nav>
-      </aside>
+    <div className="flex min-h-screen flex-col">
+      <header className="sticky top-0 z-40 border-b border-rule bg-sheet">
+        <div className="flex items-center gap-x-8 gap-y-1 px-4 max-sm:flex-wrap md:px-8">
+          <div className="flex min-w-0 items-baseline gap-3 max-sm:pt-3">
+            <Link to="/" className="text-heading font-bold tracking-tight">ЛАД</Link>
+            <span className="truncate text-small text-pencil">{name}</span>
+          </div>
+          <nav className="flex gap-6">
+            <NavLink to={`/s/${id}`} end className={tab}>Составление</NavLink>
+            <NavLink to={`/s/${id}/schedule`} className={tab}>Расписание</NavLink>
+          </nav>
+        </div>
+      </header>
       <main className="min-w-0 flex-1">
         <Outlet />
       </main>
