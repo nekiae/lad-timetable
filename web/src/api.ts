@@ -54,6 +54,17 @@ export type Schedule = {
   report: Report | null;
 };
 
+export type Reason = { text: string; source: string | null };
+
+export type Verdict = {
+  level: "ok" | "worse" | "no";
+  blocking: Reason[];
+  costs: Reason[];
+  gains: Reason[];
+  moved: number[];
+  swapped: number[];
+};
+
 export type Progress = {
   stage: "search" | "improve";
   seconds: number;
@@ -115,6 +126,11 @@ export const api = {
   latest: (id: string) => call<Schedule>("GET", `/schools/${id}/schedules/latest`),
   validate: (id: string, lessons: LessonDTO[]) =>
     call<Report>("POST", `/schools/${id}/validate`, { lessons }),
+  heatmap: (id: string, lessons: LessonDTO[], index: number) =>
+    call<Record<string, Verdict>>("POST", `/schools/${id}/heatmap`, { lessons, index }),
+  move: (id: string, lessons: LessonDTO[], index: number, day: number, period: number) =>
+    call<{ verdict: Verdict; lessons: LessonDTO[]; report: Report }>(
+      "POST", `/schools/${id}/move`, { lessons, index, day, period }),
   saveEdited: (id: string, lessons: LessonDTO[]) =>
     call<{ id: string }>("POST", `/schools/${id}/schedules`, { lessons }),
 
