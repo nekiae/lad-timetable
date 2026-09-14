@@ -23,6 +23,18 @@
   }
 }
 
+/* Печать: лист A4, белая бумага вместо фона приложения. */
+@page {
+  size: A4;
+  margin: 12mm;
+}
+
+@media print {
+  body {
+    background: #fff;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

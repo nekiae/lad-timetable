@@ -209,6 +209,8 @@ export function SchedulePage() {
             {saved === "saved" ? "Версия сохранена" : "Сохранить версию"}
           </Button>
           <Button onClick={() => api.exportXlsx(id, lessons, hideNames)}>Скачать Excel</Button>
+          {/* Печать берёт сохранённую версию — несохранённые ходы на бумагу не попадут. */}
+          {history.length === 0 && <ButtonLink to={`/s/${id}/print`}>Печать</ButtonLink>}
         </div>
       </header>
 

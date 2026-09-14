@@ -11,12 +11,14 @@ import { SchoolPage } from "./pages/SchoolPage";
 import { SchedulePage } from "./pages/SchedulePage";
 import { DataPage } from "./pages/data/DataPage";
 import { SubstitutionsPage } from "./pages/SubstitutionsPage";
+import { PrintPage } from "./pages/PrintPage";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<SchoolsPage />} />
+        <Route path="/s/:id/print" element={<PrintPage />} />
         <Route path="/s/:id" element={<Shell />}>
           <Route path="data" element={<DataPage />} />
           <Route index element={<SchoolPage />} />
