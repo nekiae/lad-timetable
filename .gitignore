@@ -12,3 +12,7 @@ out/
 .claude/
 
 data/backups/
+
+data/lad.sqlite3
+web/node_modules/
+web/dist/
