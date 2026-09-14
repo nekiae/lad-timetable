@@ -163,6 +163,13 @@ def tables_from_dict(raw: dict) -> dict[str, pd.DataFrame]:
         if name not in tables:
             continue
         table = pd.DataFrame(rows)
+        # Пустое значение в текстовой колонке — это "", а не None/NaN. Иначе
+        # str(nan) == "nan", и пустая «подгруппа» становится подгруппой «nan»
+        # у каждого урока: так ломался круг «скачал Excel → загрузил» (14.09.2026).
+        # Числовые колонки не трогаем — редактор Streamlit ждёт там числа.
+        for column in table.columns:
+            if table[column].dtype == object:
+                table[column] = table[column].where(pd.notna(table[column]), "")
         # Колонки, добавленные позже, в старом файле отсутствуют — дополняем
         # значением по умолчанию из бланка.
         sample = blank_tables()[name]
@@ -301,9 +308,9 @@ def build_school(tables: dict[str, pd.DataFrame], settings: dict,
             continue
         tid = f"t{len(teachers)}"
         teacher_ids[name] = tid
-        day = str(row.get("методический день") or "").strip()
+        day = optional(row.get("методический день"))
         wish = wishes.get(name, {})
-        cap = str(row.get("уроков в день") or "").strip()
+        cap = optional(row.get("уроков в день"))
         teachers.append(Teacher(
             id=tid, name=name,
             method_day=int(day) if day.isdigit() else None,
@@ -356,7 +363,7 @@ def build_school(tables: dict[str, pd.DataFrame], settings: dict,
             problems.append(f"строка нагрузки {n + 1}: учитель «{teacher_name}» не заведён")
             continue
 
-        part = str(row.get("подгруппа") or "").strip() or None
+        part = optional(row.get("подгруппа")) or None
         gid = class_name if part is None else f"{class_name}·{subject_name}·{part}"
         if gid not in groups:
             groups[gid] = StudyGroup(id=gid, class_ids=[class_name], part=part)

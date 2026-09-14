@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 
-import { api, type Doc, type InputState } from "../../api";
+import { api, type Doc, type ImportReport, type InputState } from "../../api";
 import { Button, ButtonLink, Notice, cx } from "../../ui";
 import type { Row } from "../../ui/DataTable";
 import { LoadStep } from "./LoadStep";
@@ -40,6 +40,8 @@ export function DataPage() {
   const [input, setInput] = useState<InputState>();
   const [saving, setSaving] = useState<"idle" | "pending" | "saving" | "saved" | "error">("idle");
   const [error, setError] = useState<string>();
+  const [report, setReport] = useState<ImportReport>();
+  const fileInput = useRef<HTMLInputElement>(null);
   const latest = useRef<Doc>();
   const timer = useRef<number>();
 
@@ -141,10 +143,41 @@ export function DataPage() {
     <div className="px-4 py-8 md:px-8">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
         <h1 className="text-title">Данные школы</h1>
-        <p aria-live="polite" className={cx("text-small", saving === "error" ? "text-no" : "text-pencil")}>
-          {savingText}
-        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <p aria-live="polite" className={cx("mr-2 text-small", saving === "error" ? "text-no" : "text-pencil")}>
+            {savingText}
+          </p>
+          <Button onClick={() => api.downloadData(id).catch(fail)}>Скачать в Excel</Button>
+          {/* Загрузка заменяет только листы, которые есть в файле; прежние данные
+              остаются в ревизиях школы. */}
+          <Button onClick={() => fileInput.current?.click()}>Загрузить из Excel</Button>
+          <input ref={fileInput} type="file" accept=".xlsx" className="hidden"
+                 onChange={async (e) => {
+                   const file = e.target.files?.[0];
+                   e.target.value = "";
+                   if (!file) return;
+                   const result = await run(() => api.importData(id, file));
+                   if (result) setReport(result.report);
+                 }} />
+        </div>
       </div>
+
+      {report && (
+        <Notice tone={Object.keys(report.unknown_columns).length || report.unknown_sheets.length ? "worse" : "ok"}
+                className="mt-4"
+                title={`Загружено из Excel: ${Object.entries(report.imported).map(([s, n]) => `${s} — ${n}`).join(", ")}`}>
+          {report.unknown_sheets.length > 0 && <p>Листы не распознаны и пропущены: {report.unknown_sheets.join(", ")}.</p>}
+          {Object.entries(report.unknown_columns).map(([sheet, cols]) => (
+            <p key={sheet}>{sheet}: колонки не распознаны и пропущены — {cols.join(", ")}.</p>
+          ))}
+          {Object.entries(report.missing_columns).map(([sheet, cols]) => (
+            <p key={sheet}>{sheet}: в файле не было колонок {cols.join(", ")} — они пустые.</p>
+          ))}
+          <button type="button" className="mt-1 text-pen underline-offset-4 hover:underline" onClick={() => setReport(undefined)}>
+            Скрыть
+          </button>
+        </Notice>
+      )}
 
       <div className="mt-6 flex gap-10 max-md:flex-col max-md:gap-6">
         <nav aria-label="Шаги ввода" className="w-56 shrink-0 max-md:w-full">

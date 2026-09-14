@@ -12,16 +12,18 @@
 
 from __future__ import annotations
 
+import io
 import json
 
 import pandas as pd
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from . import db
 
 from lad.tables import (  # noqa: E402
-    LESSON_KINDS, LEVELS, ROOM_KINDS, add_subject_slots, assign_teacher, generate_classes,
+    LESSON_KINDS, LEVELS, ROOM_KINDS, add_subject_slots, assign_teacher, blank_tables, generate_classes,
     generate_load, generate_rooms, generate_subjects, input_status, next_step, parallels_of,
     rooms_verdict, slot_label, spread_evenly, split_subjects, tables_from_dict, teacher_hours,
 )
@@ -159,3 +161,77 @@ def load_spread(school_id: str, body: Spread) -> dict:
     doc, tables = _open(school_id)
     tables["load"] = spread_evenly(tables["load"], body.subject, body.teachers)
     return _save(school_id, doc, tables)
+
+
+# ---------------------------------------------------------------- Excel
+
+# Лист файла ↔ таблица школы. Колонки — ровно те, что в таблицах ввода,
+# поэтому скачанный файл сразу является и шаблоном для заполнения.
+SHEETS = {"Классы": "classes", "Кабинеты": "rooms", "Предметы": "subjects",
+          "Учителя": "teachers", "Нагрузка": "load"}
+
+
+@router.get("/data.xlsx")
+def data_xlsx(school_id: str) -> Response:
+    """Данные школы в Excel — и резервная копия, и шаблон для заполнения."""
+    _, tables = _open(school_id)
+    out = io.BytesIO()
+    with pd.ExcelWriter(out, engine="openpyxl") as writer:
+        for sheet, name in SHEETS.items():
+            table = tables[name]
+            (table if len(table) else blank_tables()[name].iloc[0:0]).to_excel(
+                writer, sheet_name=sheet, index=False)
+            writer.sheets[sheet].freeze_panes = "A2"
+            for column in writer.sheets[sheet].columns:
+                width = max(len(str(c.value or "")) for c in column) + 2
+                writer.sheets[sheet].column_dimensions[column[0].column_letter].width = min(40, width)
+    return Response(out.getvalue(),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": 'attachment; filename="lad-dannye.xlsx"'})
+
+
+@router.post("/data.xlsx")
+async def import_xlsx(school_id: str, request: Request) -> dict:
+    """Загрузить таблицы из Excel. Заменяются только листы, которые есть в файле.
+
+    Разбор терпимый: регистр и пробелы в названиях листов и колонок не важны,
+    лишние колонки игнорируются и называются в отчёте, недостающие дополняются
+    пустыми. Прежние данные не теряются — каждое сохранение школы это ревизия.
+    Файл читается из тела запроса целиком, без multipart: одна зависимость меньше.
+    """
+    doc, tables = _open(school_id)
+    try:
+        book = pd.read_excel(io.BytesIO(await request.body()), sheet_name=None, dtype=object)
+    except Exception as error:  # noqa: BLE001 — любой нечитаемый файл это одна ошибка для человека
+        raise HTTPException(422, f"Файл не читается как Excel (.xlsx): {error}") from error
+
+    by_name = {sheet.strip().lower(): name for sheet, name in SHEETS.items()}
+    report = {"imported": {}, "unknown_sheets": [], "unknown_columns": {}, "missing_columns": {}}
+    for sheet, frame in book.items():
+        name = by_name.get(str(sheet).strip().lower())
+        if name is None:
+            report["unknown_sheets"].append(str(sheet))
+            continue
+        expected = list(blank_tables()[name].columns)
+        lookup = {c.lower(): c for c in expected}
+        frame = frame.rename(columns={c: lookup.get(str(c).strip().lower(), c) for c in frame.columns})
+        unknown = [str(c) for c in frame.columns if c not in expected]
+        missing = [c for c in expected if c not in frame.columns]
+        if unknown:
+            report["unknown_columns"][sheet] = unknown
+        if missing:
+            report["missing_columns"][sheet] = missing
+        frame = frame[[c for c in expected if c in frame.columns]].dropna(how="all")
+        # Пустая клетка Excel — это NaN, а в документе школы пустое поле — "".
+        # Оставить NaN нельзя: str(nan) даёт "nan", и пустая «подгруппа»
+        # превращалась в подгруппу «nan» у каждого урока (найдено 14.09.2026
+        # на круге «скачал → загрузил»: 4 ложные проблемы и испорченная нагрузка).
+        frame = frame.astype(object).where(pd.notna(frame), "")
+        doc.setdefault("tables", {})[name] = _records(frame)
+        report["imported"][sheet] = len(frame)
+
+    if not report["imported"]:
+        raise HTTPException(422, "В файле нет ни одного листа ЛАД: ожидаются "
+                                 + ", ".join(f"«{s}»" for s in SHEETS))
+    tables = tables_from_dict(doc)
+    return _save(school_id, doc, tables, report=report)

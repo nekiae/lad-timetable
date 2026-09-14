@@ -108,6 +108,11 @@ class Rules:
         return getattr(self, name, "off") == "hard"
 
 
+# Цена нарушения жёсткой нормы при составлении (см. limit() в solve).
+# Выбрана так, чтобы одно нарушение стоило дороже любой разумной суммы
+# мягких штрафов школы: окно у учителя — 10, выход в школу — 3.
+NORM_PRIORITY_WEIGHT = 1000
+
 # Сколько раз возобновлять фазу улучшения, если солвер вышел раньше бюджета.
 # Ограничение чисто страховочное: обычно кругов один-два, цикл и так упирается
 # во время. Нужно на случай, если солвер начнёт возвращаться мгновенно.
@@ -257,7 +262,7 @@ def available_cpus() -> int:
     return max(1, int(min(limits)))
 
 
-def solve(
+def _solve(
     school: School,
     shift: Shift = Shift.FIRST,
     max_seconds: float = 120.0,
@@ -270,6 +275,10 @@ def solve(
     params: dict | None = None,
     hierarchical: bool = False,
     ignore_rooms: bool = False,
+    soft_norms: bool = False,
+    norms_only: bool = False,
+    norm_cap: int | None = None,
+    hint: list[Lesson] | None = None,
 ) -> SolveResult:
     """Составить расписание.
 
@@ -320,6 +329,19 @@ def solve(
             slot = lesson.slot if lesson.slot in x_slots else None
             if slot is not None:
                 model.Add(x[indices[0], slot] == 1)
+
+    # --- подсказка: готовая сетка, от которой поиск стартует (см. solve()).
+    # Не ограничение — солвер волен уйти от неё, если она нарушает запреты.
+    if hint:
+        rows: dict[tuple[str, str, str], list[int]] = defaultdict(list)
+        for i, item in enumerate(school.load):
+            rows[item.group_id, item.subject_id, item.teacher_id].append(i)
+        hinted = set()
+        for lesson in hint:
+            for i in rows.get((lesson.group_id, lesson.subject_id, lesson.teacher_id), [])[:1]:
+                hinted.add((i, lesson.slot))
+        for key, var in x.items():
+            model.AddHint(var, 1 if key in hinted else 0)
 
     # --- HARD-4b: один и тот же предмет не стоит у группы дважды в один день
     # (иначе солвер честно поставит 5 математик подряд в понедельник).
@@ -720,26 +742,51 @@ def solve(
                     last[class_id, day, period] = var
 
     def edge_count(indices: list[int], class_id: str, tag: str):
-        """Сколько раз за неделю эти уроки стоят первыми или последними в дне."""
+        """Сколько раз за неделю эти уроки стоят первыми или последними в дне.
+
+        КОДИРОВКА — ОДНА ПЕРЕМЕННАЯ НА УРОК И ДЕНЬ, А НЕ НА УРОК, ДЕНЬ И НОМЕР.
+        Прежняя версия заводила «урок i стоит на p-м И p-й последний» для
+        каждого p с тремя ограничениями на каждую — на школе завуча это
+        десятки тысяч переменных только на две нормы о краях дня. Замерено
+        14.09.2026: без одной из них первое расписание находилось за 78 с,
+        без другой не находилось за 120 с — именно они держали поиск.
+
+        Теперь «урок i последний в этот день» — одна переменная, ограниченная
+        СНИЗУ: она обязана быть 1, если урок стоит на p-м и p-й последний.
+        Сверху её не держим: норма ограничивает число краёв сверху (запретом
+        или штрафом), так что солвер сам опустит переменную в 0, когда урок
+        не на краю. Двусторонняя связь для этого не нужна, а стоит втрое дороже.
+        """
         terms = []
         for day in days:
             for i in indices:
                 terms.append(x[i, Slot(day, 1, shift)])  # первый урок — всегда № 1
-                for period in range(1, school.periods_per_day + 1):
-                    if period == 1:
-                        continue  # уже посчитан как первый
-                    both = model.NewBoolVar(f"edge_{tag}_{i}_{day}_{period}")
-                    model.Add(both <= x[i, Slot(day, period, shift)])
-                    model.Add(both <= last[class_id, day, period])
-                    model.Add(both >= x[i, Slot(day, period, shift)]
+                on_last = model.NewBoolVar(f"edge_{tag}_{i}_{day}")
+                for period in range(2, school.periods_per_day + 1):
+                    model.Add(on_last >= x[i, Slot(day, period, shift)]
                               + last[class_id, day, period] - 1)
-                    terms.append(both)
+                terms.append(on_last)
         return terms
 
     def limit(mode: str, terms: list, cap: int, weight: int, tag: str):
         """Применить ограничение «не больше cap» жёстко или через штраф."""
         if not terms:
             return
+        if mode == "hard" and soft_norms:
+            # ЖЁСТКАЯ НОРМА ПРИ СОСТАВЛЕНИИ — ЭТО ВЫСШИЙ ПРИОРИТЕТ, А НЕ ЗАПРЕТ.
+            #
+            # Замерено 14.09.2026 на школе завуча (24 класса, 838 часов), поиск
+            # первого законного расписания:
+            #     нормы запретами  — 185 с, 300+ с (не нашёл), 86 с
+            #     нормы штрафами   — 1,1 с
+            # Запрет режет пространство поиска так, что солвер минутами бродит
+            # без единого решения, и завуч получает «не успел». Штраф в сотни раз
+            # дороже всего остального даёт ту же иерархию — сперва ноль нарушений
+            # норм, потом удобство, — но законная сетка есть с первой секунды.
+            # Не довёл до нуля за бюджет — нарушения видны в отчёте поимённо.
+            # Разбор причин (optimize=False) по-прежнему работает с запретами:
+            # там нужен ответ «существует ли вообще».
+            mode, weight = "soft", NORM_PRIORITY_WEIGHT
         if mode == "hard":
             model.Add(sum(terms) <= cap)
         else:  # soft: нарушение = превышение над cap, штрафуется
@@ -794,6 +841,31 @@ def solve(
                     f"норма посчитана мягко — в расписании она будет нарушена. "
                     f"Обычный выход: лишний час перенести в шестой школьный день."
                 )
+            # ТРИ ЧАСА ПРИ ПЯТИДНЕВКЕ — ЭТО ПН, СР, ПТ, И МОДЕЛИ ЭТО ГОВОРИМ ПРЯМО.
+            #
+            # Если занятий ровно столько, сколько влезает без соседних дней,
+            # а физкультура не бывает дважды в день (HARD-4b, сдваивать её
+            # нельзя), расклад по дням единственный: через день, с первого.
+            # Солвер вывел бы это и сам, но только перебором. Замерено
+            # 14.09.2026 на школе завуча (24 класса, у всех по 3 часа, залы
+            # вмещают 3 класса в час — 72 урока на 72 места): черновик за 120 с
+            # застревал на 2–3 нарушениях «два дня подряд» во всех трёх прогонах,
+            # остальные нормы сходились к нулю за секунды. Это не новое правило,
+            # а следствие нормы, записанное явно.
+            consecutive = days == list(range(days[0], days[0] + len(days)))
+            once_a_day = not any(
+                norms.double_allowed(subject_names.get(school.load[i].subject_id, ""),
+                                     parallels.get(class_id, 0),
+                                     school.load[i].level != Level.BASE)
+                or subject_always_double.get(school.load[i].subject_id, False)
+                for i in indices)
+            if mode == "hard" and hours == room_for_pe and len(days) % 2 == 1 \
+                    and consecutive and once_a_day:
+                for day in days[1::2]:
+                    for i in indices:
+                        for s in slots:
+                            if s.day == day:
+                                model.Add(x[i, s] == 0)
             for day, nxt in zip(days, days[1:]):
                 if nxt == day + 1:  # именно соседние дни недели
                     limit(mode, [pe_day[day], pe_day[nxt]], 1, w.pe_rule,
@@ -904,6 +976,12 @@ def solve(
         setattr(solver.parameters, name, value)
     fallback: list[Lesson] = []
 
+    # Потолок нарушений норм для доводки (см. solve()): удобство улучшаем,
+    # но нормы на него не меняем. Ставится ДО первой фазы — иначе первая
+    # найденная сетка может оказаться хуже черновика, от которого стартуем.
+    if norm_cap is not None and trackers.get("Нарушений норм"):
+        model.Add(sum(trackers["Нарушений норм"]) <= norm_cap)
+
     if optimize and penalties:
         # ДВЕ ФАЗЫ. Замерено 24.08.2026 на школе из 28 классов и 980 часов:
         # без целевой функции допустимое расписание находится за 13 секунд,
@@ -939,6 +1017,7 @@ def solve(
         solver.parameters.linearization_level = 2
         spent = solver.WallTime()
         if first in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            model.ClearHints()  # повторный AddHint без очистки делает модель невалидной
             for key, var in x.items():
                 model.AddHint(var, solver.Value(var))
             if on_progress:
@@ -962,7 +1041,11 @@ def solve(
                 for slot in slots if solver.Value(x[i, slot])
             ]
 
-        objective = sum(var * weight for var, weight in penalties)
+        if norms_only and trackers.get("Нарушений норм"):
+            # Черновик: единственная цель — ноль нарушений норм (см. solve()).
+            objective = sum(trackers["Нарушений норм"])
+        else:
+            objective = sum(var * weight for var, weight in penalties)
         reporter = _Reporter(dict(trackers), max_seconds, on_progress, should_stop, started_at)
         gap_vars = trackers.get("Окна у учителей") or []
 
@@ -1101,6 +1184,98 @@ def solve(
     return SolveResult(solver.StatusName(status), lessons, solver.WallTime(), penalty, relaxed)
 
 
+def solve(
+    school: School,
+    shift: Shift = Shift.FIRST,
+    max_seconds: float = 120.0,
+    weights: Weights | None = None,
+    optimize: bool = True,
+    rules: Rules | None = None,
+    on_progress=None,
+    should_stop=None,
+    pinned: list[Lesson] | None = None,
+    params: dict | None = None,
+    hierarchical: bool = False,
+    ignore_rooms: bool = False,
+) -> SolveResult:
+    """Составить расписание. Всегда отдаёт сетку, если она в принципе существует.
+
+    ПОЧЕМУ ДВА ШАГА. Замерено 14.09.2026 на школе завуча (24 класса, 838 часов):
+      • нормы запретами — первое расписание за 185 с, 86 с, а в одном прогоне
+        из трёх не нашлось за 5 минут вовсе («не успел»);
+      • нормы штрафами — первое расписание за 1,1 с, но за 5 минут в сетке
+        осталось 29 нарушений норм: удобство учителей и нормы тянули в разные
+        стороны, и солвер разменивал одно на другое.
+
+    Поэтому сначала ЧЕРНОВИК: нормы штрафом, а цель одна — ноль нарушений.
+    Сетка есть с первой секунды, и все силы уходят на нормы. Потом черновик
+    идёт подсказкой в доводку удобства, где нарушений норм не может стать
+    больше, чем в черновике: при нуле это те же запреты, но старт не с пустого
+    места, а с законной сетки.
+
+    Если черновик до нуля не дошёл — нормы, скорее всего, в этой школе
+    одновременно невыполнимы. Тогда отдаём лучшую сетку с поимённым списком
+    нарушений, а не пустой экран.
+
+    Разбор причин (optimize=False) идёт напрямую, с запретами: там нужен
+    ответ «существует ли расписание вообще».
+    """
+    rules = rules or Rules()
+    common = dict(shift=shift, weights=weights, rules=rules, should_stop=should_stop,
+                  pinned=pinned, params=params, ignore_rooms=ignore_rooms)
+    if not optimize or not any(rules.is_hard(name) for name in RULE_TITLES):
+        return _solve(school, max_seconds=max_seconds, optimize=optimize,
+                      on_progress=on_progress, hierarchical=hierarchical, **common)
+
+    started = time.monotonic()
+
+    def left() -> float:
+        return max_seconds - (time.monotonic() - started)
+
+    # Черновику — почти весь бюджет. Он останавливается сам, как только доказал
+    # ноль нарушений (цель — сумма нарушений, ноль — нижняя граница), поэтому
+    # лишнего не съест. Половины не хватало: замерено 14.09.2026, один сид из трёх
+    # доходил до нуля только на 106-й секунде, а обёртка обрывала его на 60-й.
+    draft = _solve(school, max_seconds=max_seconds * 0.8, optimize=True, soft_norms=True,
+                   norms_only=True, on_progress=on_progress, **common)
+    if not draft.ok:
+        return draft
+
+    if not (should_stop and should_stop()) and left() > 5:
+        # Доводка удобства — от черновика и с потолком «нарушений норм не больше,
+        # чем в черновике». Без потолка доводка разменивала нормы на окна учителей:
+        # замерено 14.09.2026 — прогон с 18 нарушениями на выходе. При нуле
+        # в черновике потолок ноль — это те же запреты, но старт с законной сетки.
+        final = _solve(school, max_seconds=left(), optimize=True, soft_norms=True,
+                       norm_cap=draft.penalty, hint=draft.lessons, on_progress=on_progress,
+                       hierarchical=hierarchical, **common)
+        if final.ok:
+            final.wall_time = time.monotonic() - started
+            return final
+
+    draft.wall_time = time.monotonic() - started
+    draft.penalty = None  # штраф черновика считает только нормы, с итоговым несравним
+    return draft
+
+    stopped = bool(should_stop and should_stop())
+    if draft.penalty == 0 and not stopped and left() > 5:
+        final = _solve(school, max_seconds=left(), optimize=True, hint=draft.lessons,
+                       on_progress=on_progress, hierarchical=hierarchical, **common)
+        if final.ok:
+            final.wall_time = time.monotonic() - started
+            return final
+    elif draft.penalty != 0 and not stopped and left() > 5:
+        final = _solve(school, max_seconds=left(), optimize=True, soft_norms=True,
+                       hint=draft.lessons, on_progress=on_progress, **common)
+        if final.ok:
+            final.wall_time = time.monotonic() - started
+            return final
+
+    draft.wall_time = time.monotonic() - started
+    draft.penalty = None  # штраф черновика считает только нормы, с итоговым несравним
+    return draft
+
+
 def assign_rooms(school: School, lessons: list[Lesson]) -> list[Lesson]:
     """Назначить конкретные кабинеты уже поставленным урокам.
 
@@ -1121,6 +1296,25 @@ def assign_rooms(school: School, lessons: list[Lesson]) -> list[Lesson]:
                       for i in school.load if i.room_kind}
     home = {t.id: t.home_room_id for t in school.teachers if t.home_room_id}
 
+    # КАБИНЕТ КЛАССА. Без него класс кочевал: замерено 14.09.2026 на школе завуча —
+    # до 13 разных обычных кабинетов у одного класса за неделю, потому что комнаты
+    # раздавались «первая свободная» слот за слотом. Завуч увидит это на первом же
+    # листе печати. Теперь у каждого класса свой обычный кабинет — по порядку, пока
+    # их хватает, — и его урокам он достаётся первым. При кабинетной системе
+    # (у учителей свои кабинеты) классам кабинеты не закрепляем: там ходят дети.
+    regular_rooms = rooms_by_kind.get(RoomKind.REGULAR, [])
+    class_home = {} if home else {
+        c.id: regular_rooms[n].id for n, c in enumerate(school.classes) if n < len(regular_rooms)}
+    reserved = set(class_home.values())
+    groups = {g.id: g for g in school.groups}
+    last_room: dict[str, str] = {}  # учитель → кабинет его предыдущего урока
+
+    def class_room(lesson) -> str | None:
+        group = groups.get(lesson.group_id)
+        if group and group.part is None and len(group.class_ids) == 1:
+            return class_home.get(group.class_ids[0])
+        return None
+
     by_slot: dict[Slot, list[Lesson]] = defaultdict(list)
     for lesson in lessons:
         by_slot[lesson.slot].append(lesson)
@@ -1129,7 +1323,10 @@ def assign_rooms(school: School, lessons: list[Lesson]) -> list[Lesson]:
     # спортзал держит два урока сразу (Room.parallel_classes).
     room_by_id = {room.id: room for room in school.rooms}
 
-    for slot, slot_lessons in by_slot.items():
+    # По порядку недели: «кабинет предыдущего урока учителя» имеет смысл
+    # только если предыдущий урок и правда был раньше.
+    for slot in sorted(by_slot, key=lambda sl: (sl.shift, sl.day, sl.period)):
+        slot_lessons = by_slot[slot]
         used: dict[str, int] = defaultdict(int)
         for lesson in slot_lessons:
             if lesson.room_id:
@@ -1144,7 +1341,8 @@ def assign_rooms(school: School, lessons: list[Lesson]) -> list[Lesson]:
         def strictness(lesson) -> int:
             return 0 if subject_strict.get(lesson.subject_id, True) else 1
 
-        for lesson in sorted(slot_lessons, key=strictness):
+        # Хозяева кабинетов — раньше остальных, чтобы их комнату не заняли «просто так».
+        for lesson in sorted(slot_lessons, key=lambda l: (strictness(l), class_room(l) is None)):
             if lesson.room_id:
                 continue
             kind = kind_of_lesson.get(
@@ -1156,16 +1354,29 @@ def assign_rooms(school: School, lessons: list[Lesson]) -> list[Lesson]:
             if not fixed and not subject_strict.get(lesson.subject_id, True) \
                     and kind != RoomKind.REGULAR:
                 pool.append(RoomKind.REGULAR)
-            candidates = [room for k in pool for room in rooms_by_kind.get(k, [])]
+            teacher = lesson.teacher_id
+            # Свой кабинет учителя → кабинет класса → где учитель вёл прошлый урок.
+            prefer = (home.get(teacher), class_room(lesson), last_room.get(teacher))
 
-            preferred = home.get(lesson.teacher_id)
-            if preferred and has_place(preferred) and any(r.id == preferred for r in candidates):
-                lesson.room_id = preferred
-            else:
-                free = next((r for r in candidates if has_place(r.id)), None)
-                lesson.room_id = free.id if free else None
+            def first_free(rooms) -> str | None:
+                ids = [r.id for r in rooms]
+                wanted = next((w for w in prefer if w and w in ids and has_place(w)), None)
+                # Без предпочтения — сначала ничьи кабинеты, потом чужие закреплённые:
+                # хозяин сейчас не здесь, но его комнату лучше не трогать.
+                return wanted or next((i for i in ids if has_place(i) and i not in reserved), None) \
+                    or next((i for i in ids if has_place(i)), None)
+
+            # Сначала кабинет СВОЕГО типа. Замерено 14.09.2026: если пускать нестрогую
+            # физику сразу в кабинет класса, она занимала его при свободном кабинете
+            # физики, и на урезанном фонде без комнаты оставалось вдвое больше уроков
+            # (48 против 24). Свой тип занят — нестрогий предмет идёт в обычный,
+            # и лучше в кабинет своего класса, чем в случайный.
+            lesson.room_id = first_free(rooms_by_kind.get(kind, []))
+            if lesson.room_id is None and len(pool) > 1:
+                lesson.room_id = first_free(rooms_by_kind.get(RoomKind.REGULAR, []))
             if lesson.room_id:
                 used[lesson.room_id] += 1
+                last_room[teacher] = lesson.room_id
     return lessons
 
 

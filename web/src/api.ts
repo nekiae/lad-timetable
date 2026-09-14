@@ -26,6 +26,13 @@ export type InputState = {
   options: { room_kinds: string[]; levels: string[]; lesson_kinds: string[] };
 };
 
+export type ImportReport = {
+  imported: Record<string, number>;
+  unknown_sheets: string[];
+  unknown_columns: Record<string, string[]>;
+  missing_columns: Record<string, string[]>;
+};
+
 /** Ответ действия ввода: школа целиком после сохранения. */
 export type Saved = { doc: Doc; revision: number };
 
@@ -203,6 +210,22 @@ export const api = {
     });
     return () => source.close();
   },
+
+  /** Данные школы в Excel: резервная копия и шаблон для заполнения. */
+  async downloadData(id: string) {
+    const res = await fetch(`/api/schools/${id}/data.xlsx`);
+    if (!res.ok) throw new Error("Файл не скачался");
+    const url = URL.createObjectURL(await res.blob());
+    const link = Object.assign(document.createElement("a"), { href: url, download: "lad-dannye.xlsx" });
+    link.click();
+    URL.revokeObjectURL(url);
+  },
+  importData: (id: string, file: File) =>
+    fetch(`/api/schools/${id}/data.xlsx`, { method: "POST", body: file }).then(async (res) => {
+      const data = await res.json();
+      if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail));
+      return data as Saved & { report: ImportReport };
+    }),
 
   async exportXlsx(id: string, lessons: LessonDTO[], anonymize: boolean) {
     const res = await fetch(`/api/schools/${id}/export.xlsx?anonymize=${anonymize}`, {
