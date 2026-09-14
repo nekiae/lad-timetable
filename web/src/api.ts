@@ -88,6 +88,25 @@ export type Verdict = {
   swapped: number[];
 };
 
+export type Candidate = {
+  teacher_id: string;
+  name: string;
+  score: number;
+  level: "best" | "good" | "possible";
+  reasons: string[];
+  costs: string[];
+};
+
+export type Need = {
+  index: number;
+  period: number;
+  group_name: string;
+  subject: string;
+  room_id: string | null;
+  candidates: Candidate[];
+  note: string | null;
+};
+
 export type Progress = {
   stage: "search" | "improve";
   seconds: number;
@@ -168,6 +187,9 @@ export const api = {
   move: (id: string, lessons: LessonDTO[], index: number, day: number, period: number) =>
     call<{ verdict: Verdict; lessons: LessonDTO[]; report: Report }>(
       "POST", `/schools/${id}/move`, { lessons, index, day, period }),
+  substitutions: (id: string, teacherId: string, day: number, lessons: LessonDTO[]) =>
+    call<{ teacher: string; day: number; day_name: string; needs: Need[] }>(
+      "POST", `/schools/${id}/substitutions`, { teacher_id: teacherId, day, lessons }),
   saveEdited: (id: string, lessons: LessonDTO[]) =>
     call<{ id: string }>("POST", `/schools/${id}/schedules`, { lessons }),
 

@@ -21,16 +21,17 @@ export function Shell() {
 
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="sticky top-0 z-40 border-b border-rule bg-sheet">
+      <header className="sticky top-0 z-40 border-b border-rule bg-sheet print:hidden">
         <div className="flex items-center gap-x-8 gap-y-1 px-4 max-sm:flex-wrap md:px-8">
           <div className="flex min-w-0 items-baseline gap-3 max-sm:pt-3">
             <Link to="/" className="text-heading font-bold tracking-tight">ЛАД</Link>
             <span className="truncate text-small text-pencil">{name}</span>
           </div>
-          <nav className="flex gap-6">
+          <nav className="flex gap-6 overflow-x-auto">
             <NavLink to={`/s/${id}/data`} className={tab}>Данные</NavLink>
             <NavLink to={`/s/${id}`} end className={tab}>Составление</NavLink>
             <NavLink to={`/s/${id}/schedule`} className={tab}>Расписание</NavLink>
+            <NavLink to={`/s/${id}/substitutions`} className={tab}>Замены</NavLink>
           </nav>
         </div>
       </header>

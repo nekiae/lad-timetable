@@ -20,7 +20,7 @@ from . import ROOT, db
 from .entry import router as entry_router
 from .jobs import JOBS, start_job
 
-from lad import explain  # noqa: E402
+from lad import explain, substitute  # noqa: E402
 from lad.excel import to_bytes as excel_bytes  # noqa: E402
 from lad.model import Slot  # noqa: E402
 from lad.solve import PRESETS, RULE_SOURCES, RULE_TITLES, Rules, assign_rooms  # noqa: E402
@@ -299,6 +299,34 @@ def export_xlsx(school_id: str, body: LessonsBody, anonymize: bool = False) -> R
     return Response(data, media_type="application/vnd.openxmlformats-officedocument."
                                      "spreadsheetml.sheet",
                     headers={"Content-Disposition": 'attachment; filename="raspisanie.xlsx"'})
+
+
+# ---------------------------------------------------------------- замены
+
+class SubstituteBody(BaseModel):
+    teacher_id: str
+    day: int  # день недели: 1 = понедельник
+    lessons: list[dict] | None = None  # сетка; по умолчанию — последняя сохранённая
+
+
+@app.post("/api/schools/{school_id}/substitutions")
+def substitutions(school_id: str, body: SubstituteBody) -> dict:
+    """Кто проведёт уроки отсутствующего учителя — кандидаты с причинами."""
+    doc, _ = _load(school_id)
+    school, problems = _build(doc)
+    if problems:
+        raise HTTPException(422, {"problems": problems})
+    if body.lessons is None:
+        row = db.latest_schedule(school_id)
+        if row is None:
+            raise HTTPException(404, "Расписания ещё нет")
+        body.lessons = row["lessons"]
+    teacher = next((t for t in school.teachers if t.id == body.teacher_id), None)
+    if teacher is None:
+        raise HTTPException(404, "Учитель не найден")
+    needs = substitute.plan(school, lessons_from_dict(body.lessons), body.teacher_id, body.day)
+    return {"teacher": teacher.name, "day": body.day, "day_name": DAY_NAMES.get(body.day, ""),
+            "needs": [asdict(n) for n in needs]}
 
 
 # ---------------------------------------------------------------- интерфейс
