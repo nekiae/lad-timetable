@@ -65,6 +65,17 @@ export function SearchView({ budget, elapsed, progress, first, timeline, setup, 
                 </span>
               </p>
               <p className="text-small text-pencil">{step.text}</p>
+              {/* На этапе норм — какая норма сейчас держит: хвост «1 → 0» бывает
+                  долгим, и видно, во что упёрся солвер. */}
+              {n === 1 && step.active && progress && Object.values(progress.norms ?? {}).some(Boolean) && (
+                <ul className="mt-1.5 space-y-0.5 text-small">
+                  {Object.entries(progress.norms).filter(([, v]) => v > 0).map(([title, v]) => (
+                    <li key={title} className="flex justify-between gap-2">
+                      <span>{title}</span><span className="font-semibold text-no">{v}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </li>
           );
         })}

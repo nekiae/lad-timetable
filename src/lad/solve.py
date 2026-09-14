@@ -119,6 +119,41 @@ NORM_PRIORITY_WEIGHT = 1000
 _MAX_IMPROVE_ROUNDS = 8
 
 
+# РУЧКИ АЛГОРИТМА для замеров (bench/solver.py --tune ключ=значение).
+# Значения по умолчанию — те, что прошли замер 14.09.2026 (5 из 5 без нарушений).
+# Менять значение по умолчанию — только с цифрами стенда, а не на глаз.
+TUNING: dict = {
+    # Доля бюджета на черновик «ноль нарушений». Черновик останавливается сам,
+    # когда доказал ноль, поэтому большая доля не отнимает время у доводки.
+    "draft_share": 0.8,
+    # Черновик учитывает и удобство (окна, ровность дней) со второстепенным весом,
+    # а не только нормы. Цель — чтобы доводка стартовала не с 1242 окон.
+    # Риск: без чистой цели «сумма нарушений» черновик не останавливается на нуле
+    # сам и тратит всю свою долю бюджета. Кандидат, по умолчанию выключен.
+    "draft_comfort": False,
+    # Сначала расставлять физкультуру. Замер 14.09.2026: хвост черновика («1 → 0»)
+    # держит «физкультура первым или последним уроком» — залы в пн/ср/пт забиты
+    # целиком (72 урока на 72 места), и класс упирается в край дня. Самый дефицитный
+    # ресурс принято решать первым: стратегия ветвления по урокам физкультуры.
+    # Действует на воркер с фиксированным поиском из портфеля CP-SAT. Кандидат.
+    "pe_decisions_first": False,
+}
+
+
+# Метка ограничения в limit() → человеческое имя нормы. Метки ставятся ниже
+# в _solve: pe2_ — два дня подряд, peedge_ — физкультура на краю дня,
+# hsedge_ — трудный предмет на краю дня (все три — п. 94 ССЭТ № 525).
+_NORM_TAGS = {
+    "pe2_": "Физкультура два дня подряд",
+    "peedge_": "Физкультура первым или последним уроком",
+    "hsedge_": "Трудный предмет на краю дня",
+}
+
+
+def _norm_title(tag: str) -> str:
+    return next((title for prefix, title in _NORM_TAGS.items() if tag.startswith(prefix)), "Другие нормы")
+
+
 class SolveResult:
     def __init__(
         self, status: str, lessons: list[Lesson], wall_time: float, penalty: int | None = None,
@@ -161,6 +196,9 @@ class Progress:
     # Снимок лучшей сетки: [строка нагрузки, день, урок] на каждый поставленный урок.
     # Не на каждое решение, а не чаще раза в секунду — см. _Reporter.
     grid: list[list[int]] | None = None
+    # Нарушения по каждой норме отдельно — чтобы видеть, КАКАЯ норма держит хвост
+    # поиска («1 → 0» тянется десятки секунд), а не одно общее число.
+    norms: dict[str, int] = field(default_factory=dict)
 
     @property
     def gap(self) -> float | None:
@@ -180,9 +218,11 @@ class _Reporter(cp_model.CpSolverSolutionCallback):
 
     def __init__(self, trackers: dict[str, list], budget: float,
                  on_progress, should_stop, started_at: float,
-                 phase: str = "polish", grid_vars: list | None = None):
+                 phase: str = "polish", grid_vars: list | None = None,
+                 norm_detail: dict | None = None):
         super().__init__()
         self._trackers = trackers
+        self._norm_detail = norm_detail or {}
         self._budget = budget
         self._on_progress = on_progress
         self._should_stop = should_stop
@@ -219,9 +259,19 @@ class _Reporter(cp_model.CpSolverSolutionCallback):
                 metrics=metrics,
                 phase=self._phase,
                 grid=grid,
+                norms={title: sum(int(self.Value(v)) for v in variables)
+                       for title, variables in self._norm_detail.items()},
             ))
         if self._should_stop and self._should_stop():
             self.StopSearch()
+
+
+def _norm_violations(school: School, lessons: list[Lesson]) -> int | None:
+    """Сколько нарушений норм в сетке — тем же валидатором, что считает отчёт."""
+    if not lessons:
+        return None
+    from .validate import check  # локально: validate не нужен солверу, кроме этого случая
+    return len(check(school, lessons).norm_violations)
 
 
 def available_cpus() -> int:
@@ -322,6 +372,7 @@ def _solve(
     # Переменные, по которым считаются ЖИВЫЕ метрики для интерфейса.
     # Те же величины, что потом покажет валидатор, — но их видно уже в процессе.
     trackers: dict[str, list] = defaultdict(list)
+    norm_detail: dict[str, list] = defaultdict(list)  # норма → переменные превышения
 
     # --- переменные: x[i, slot] = 1, если i-я строка нагрузки стоит в этом слоте
     x: dict[tuple[int, Slot], cp_model.IntVar] = {}
@@ -815,6 +866,7 @@ def _solve(
             model.Add(over >= sum(terms) - cap)
             penalties.append((over, weight))
             trackers["Нарушений норм"].append(over)
+            norm_detail[_norm_title(tag)].append(over)
 
     # --- п. 94 ССЭТ № 525: физическая культура.
     # «Не допускается проведение учебных занятий по учебному предмету
@@ -896,6 +948,11 @@ def _solve(
         for class_id, indices in pe_indices.items():
             limit(rules.pe_edges, edge_count(indices, class_id, f"pe_{class_id}"),
                   norms.pe_max_first_or_last, w.pe_rule, f"peedge_{class_id}")
+
+    if TUNING["pe_decisions_first"] and pe_indices:
+        pe_rows = sorted({i for indices in pe_indices.values() for i in indices})
+        model.AddDecisionStrategy([x[i, slot] for i in pe_rows for slot in slots],
+                                  cp_model.CHOOSE_FIRST, cp_model.SELECT_MAX_VALUE)
 
     # --- п. 94 ССЭТ № 525: предметы, требующие большого умственного напряжения.
     # «В V–XI классах каждый из учебных предметов, требующих большого умственного
@@ -1050,6 +1107,8 @@ def _solve(
                     phase=phase,
                     grid=[[i, slot.day, slot.period] for (i, slot), var in x.items()
                           if solver.Value(var)],
+                    norms={title: sum(int(solver.Value(v)) for v in variables)
+                           for title, variables in norm_detail.items()},
                 ))
 
         # Решение первой фазы забираем СРАЗУ, а не пересчитываем потом.
@@ -1071,7 +1130,8 @@ def _solve(
         else:
             objective = sum(var * weight for var, weight in penalties)
         reporter = _Reporter(dict(trackers), max_seconds, on_progress, should_stop, started_at,
-                             phase=phase, grid_vars=[(i, slot, var) for (i, slot), var in x.items()])
+                             phase=phase, grid_vars=[(i, slot, var) for (i, slot), var in x.items()],
+                             norm_detail=dict(norm_detail))
         gap_vars = trackers.get("Окна у учителей") or []
 
         if hierarchical and gap_vars:
@@ -1261,8 +1321,9 @@ def solve(
     # ноль нарушений (цель — сумма нарушений, ноль — нижняя граница), поэтому
     # лишнего не съест. Половины не хватало: замерено 14.09.2026, один сид из трёх
     # доходил до нуля только на 106-й секунде, а обёртка обрывала его на 60-й.
-    draft = _solve(school, max_seconds=max_seconds * 0.8, optimize=True, soft_norms=True,
-                   norms_only=True, on_progress=on_progress, phase="draft", **common)
+    draft = _solve(school, max_seconds=max_seconds * float(TUNING["draft_share"]), optimize=True,
+                   soft_norms=True, norms_only=not TUNING["draft_comfort"], on_progress=on_progress,
+                   phase="draft", **common)
     if not draft.ok:
         return draft
 
@@ -1271,8 +1332,9 @@ def solve(
         # чем в черновике». Без потолка доводка разменивала нормы на окна учителей:
         # замерено 14.09.2026 — прогон с 18 нарушениями на выходе. При нуле
         # в черновике потолок ноль — это те же запреты, но старт с законной сетки.
+        cap = draft.penalty if not TUNING["draft_comfort"] else _norm_violations(school, draft.lessons)
         final = _solve(school, max_seconds=left(), optimize=True, soft_norms=True,
-                       norm_cap=draft.penalty, hint=draft.lessons, on_progress=on_progress,
+                       norm_cap=cap, hint=draft.lessons, on_progress=on_progress,
                        hierarchical=hierarchical, **common)
         if final.ok:
             final.wall_time = time.monotonic() - started
