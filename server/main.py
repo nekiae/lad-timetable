@@ -19,9 +19,11 @@ from pydantic import BaseModel
 from . import ROOT, db
 from .jobs import JOBS, start_job
 
+from lad import explain  # noqa: E402
 from lad.excel import to_bytes as excel_bytes  # noqa: E402
-from lad.solve import PRESETS, RULE_SOURCES, RULE_TITLES, Rules  # noqa: E402
-from lad.storage import lessons_from_dict  # noqa: E402
+from lad.model import Slot  # noqa: E402
+from lad.solve import PRESETS, RULE_SOURCES, RULE_TITLES, Rules, assign_rooms  # noqa: E402
+from lad.storage import lessons_from_dict, lessons_to_dict  # noqa: E402
 from lad.tables import build_school, check_norms, tables_from_dict  # noqa: E402
 from lad.validate import check  # noqa: E402
 
@@ -235,6 +237,49 @@ def validate(school_id: str, body: LessonsBody) -> dict:
     if problems:
         raise HTTPException(422, {"problems": problems})
     return _report_dict(check(school, lessons_from_dict(body.lessons)))
+
+
+def _verdict_dict(verdict) -> dict:
+    return asdict(verdict)
+
+
+class MoveBody(BaseModel):
+    lessons: list[dict]
+    index: int
+    day: int | None = None
+    period: int | None = None
+
+
+@app.post("/api/schools/{school_id}/heatmap")
+def heatmap(school_id: str, body: MoveBody) -> dict:
+    """Подсветка недели для перетаскиваемого урока: «день-урок» → оценка."""
+    doc, _ = _load(school_id)
+    school, problems = _build(doc)
+    if problems:
+        raise HTTPException(422, {"problems": problems})
+    lessons = lessons_from_dict(body.lessons)
+    if not 0 <= body.index < len(lessons):
+        raise HTTPException(422, "Нет такого урока")
+    return {key: _verdict_dict(v) for key, v in explain.heatmap(school, lessons, body.index).items()}
+
+
+@app.post("/api/schools/{school_id}/move")
+def move(school_id: str, body: MoveBody) -> dict:
+    """Оценить один ход и вернуть сетку после него — применять или нет, решает завуч."""
+    doc, _ = _load(school_id)
+    school, problems = _build(doc)
+    if problems:
+        raise HTTPException(422, {"problems": problems})
+    lessons = lessons_from_dict(body.lessons)
+    if not 0 <= body.index < len(lessons) or body.day is None or body.period is None:
+        raise HTTPException(422, "Нужны урок и клетка")
+    source = lessons[body.index].slot
+    target = Slot(body.day, body.period, source.shift)
+    verdict = explain.evaluate_move(school, lessons, body.index, target)
+    lessons = explain.apply_move(lessons, verdict, source, target)
+    assign_rooms(school, lessons)
+    return {"verdict": _verdict_dict(verdict), "lessons": lessons_to_dict(lessons),
+            "report": _report_dict(check(school, lessons))}
 
 
 @app.post("/api/schools/{school_id}/schedules")
