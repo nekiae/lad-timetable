@@ -357,7 +357,7 @@ export function SchedulePage() {
       )}
 
       <div className="mt-5 flex gap-6 max-lg:flex-col">
-        <div className={cx("min-w-0 flex-1 overflow-auto rounded-lg border border-rule bg-sheet transition-opacity duration-300",
+        <div data-grid className={cx("min-w-0 flex-1 overflow-auto rounded-lg border border-rule bg-sheet transition-opacity duration-300",
                            rebuild && "pointer-events-none opacity-60")}
              style={{ maxHeight: "calc(100vh - 180px)" }}>
           <table className="border-separate border-spacing-0 font-narrow text-cell">
@@ -673,6 +673,18 @@ function animateMoves(before: LessonDTO[], after: LessonDTO[], rects: Map<string
   if (!moves.length) return;
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const cells = new Set<string>();
+  // Плашки летят в слое размером ровно с видимую область сетки, и всё за её
+  // краем обрезается. Без слоя они вылетали на поля страницы и поверх колонки
+  // с днями — на снимке перелёта это выглядело мусором (15.09.2026).
+  const frame = document.querySelector("[data-grid]")?.getBoundingClientRect();
+  const layer = document.createElement("div");
+  if (frame && !reduce) {
+    layer.className = "pointer-events-none fixed z-50 overflow-hidden rounded-lg";
+    Object.assign(layer.style, { left: `${frame.left}px`, top: `${frame.top}px`,
+                                 width: `${frame.width}px`, height: `${frame.height}px` });
+    document.body.appendChild(layer);
+    window.setTimeout(() => layer.remove(), 2600);
+  }
   moves.slice(0, 120).forEach((move, n) => {
     const [groupId, subjectId] = move.key.split("|");
     const classId = dir.groups[groupId]?.class_ids[0];
@@ -681,14 +693,14 @@ function animateMoves(before: LessonDTO[], after: LessonDTO[], rects: Map<string
     cells.add(cellKey(classId, day, period));
     const from = rects.get(`${move.key}|${move.from}`);
     const target = document.querySelector(`[data-cell="${cellKey(classId, day, period)}"]`);
-    if (reduce || !from || !target) return;
+    if (reduce || !frame || !from || !target) return;
     const to = target.getBoundingClientRect();
     const ghost = document.createElement("div");
     ghost.textContent = short(dir.subjects[subjectId] ?? subjectId);
-    ghost.className = "pointer-events-none fixed z-50 rounded bg-pen px-1.5 py-0.5 font-narrow text-cell font-medium text-white shadow-pop";
-    ghost.style.left = `${from.left + 4}px`;
-    ghost.style.top = `${from.top + 4}px`;
-    document.body.appendChild(ghost);
+    ghost.className = "absolute rounded bg-pen px-1.5 py-0.5 font-narrow text-cell font-medium text-white shadow-pop";
+    ghost.style.left = `${from.left - frame.left + 4}px`;
+    ghost.style.top = `${from.top - frame.top + 4}px`;
+    layer.appendChild(ghost);
     const dx = to.left - from.left, dy = to.top - from.top;
     const flight = ghost.animate(
       [
