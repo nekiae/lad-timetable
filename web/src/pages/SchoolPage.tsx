@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { api, type Progress, type SolveDone } from "../api";
-import { Button, Choice, Notice, Panel, Segmented, Stat } from "../ui";
+import { Button, ButtonLink, Choice, Notice, Panel, Segmented, Stat } from "../ui";
 
 const BUDGETS = [
   { value: 120, label: "2 минуты" },
@@ -60,7 +60,10 @@ export function SchoolPage() {
   }
 
   const running = Boolean(job && !done);
-  const blocked = Boolean(check?.problems.length);
+  // Пустая школа — не ошибка данных, а незаполненные данные: кнопка
+  // «Составить» здесь бессмысленна, главное действие — пойти их вносить.
+  const empty = Boolean(check && check.stats.hours === 0);
+  const blocked = Boolean(check?.problems.length) || empty;
 
   return (
     <div className="max-w-3xl px-4 py-10 md:px-8">
@@ -73,7 +76,14 @@ export function SchoolPage() {
         </p>
       )}
 
-      {blocked && (
+      {empty && (
+        <Notice tone="info" title="Данных школы пока нет" className="mt-6">
+          <p>Составлять не из чего: нужны классы, учителя и нагрузка.</p>
+          <div className="mt-3"><ButtonLink to={`/s/${id}/data`} variant="primary">Внести данные школы</ButtonLink></div>
+        </Notice>
+      )}
+
+      {blocked && !empty && (
         <Notice tone="no" title="Сначала исправьте данные" className="mt-6">
           <ul className="list-disc space-y-1 pl-5">
             {check!.problems.slice(0, 12).map((p) => <li key={p}>{p}</li>)}
@@ -106,7 +116,7 @@ export function SchoolPage() {
       </fieldset>
 
       <div className="mt-8">
-        {!running ? (
+        {empty ? null : !running ? (
           <Button variant="primary" size="lg" disabled={blocked || !check} onClick={start}>
             Составить расписание
           </Button>
