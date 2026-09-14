@@ -77,7 +77,9 @@ export function SchedulePage() {
   const [selected, setSelected] = useState<number | null>(null);
   const [heat, setHeat] = useState<Record<string, Verdict> | null>(null);
   const [preview, setPreview] = useState<{ key: string; verdict: Verdict } | null>(null);
-  const [last, setLast] = useState<Verdict | null>(null);
+  // Итог последней попытки хода: применён он или отклонён. Отказ в красную
+  // клетку тоже показывается, но заголовком «Сюда нельзя», а не «поменялись».
+  const [last, setLast] = useState<{ verdict: Verdict; applied: boolean } | null>(null);
   const [hideNames, setHideNames] = useState(false);
   const [saved, setSaved] = useState<"idle" | "saving" | "saved">("idle");
 
@@ -119,6 +121,7 @@ export function SchedulePage() {
     setSelected(index);
     setHeat(null);
     setPreview(null);
+    setLast(null);
     setHeat(await api.heatmap(id, lessons, index));
   }
 
@@ -126,14 +129,14 @@ export function SchedulePage() {
     if (selected === null || !heat) return;
     const verdict = heat[`${day}-${period}`];
     if (!verdict || verdict.level === "no") {
-      setLast(verdict ?? null);
+      setLast(verdict ? { verdict, applied: false } : null);
       return;
     }
     const result = await api.move(id, lessons, selected, day, period);
     setHistory((h) => [...h, { lessons, report }]);
     setLessons(result.lessons);
     setReport(result.report);
-    setLast(result.verdict);
+    setLast({ verdict: result.verdict, applied: true });
     setSelected(null);
     setHeat(null);
     setPreview(null);
@@ -159,7 +162,7 @@ export function SchedulePage() {
     setSaved("saved");
   }
 
-  const shown = preview?.verdict ?? last;
+  const shown = preview ? { verdict: preview.verdict, applied: false } : last;
 
   return (
     <div className="px-4 py-8 md:px-8">
@@ -290,11 +293,11 @@ export function SchedulePage() {
           {/* Список не прячется при наведении: иначе наведение на пункт убирает
               сам пункт, и щелчок уходит в пустоту (найдено 14.09.2026). */}
           {selected !== null && heat && (
-            <Options heat={heat} dir={dir} current={`${lessons[selected].day}-${lessons[selected].period}`}
+            <Options heat={heat} dir={dir} lessons={lessons} current={`${lessons[selected].day}-${lessons[selected].period}`}
                      onPick={(day, period) => place(day, period)}
                      onHover={(key) => setPreview(key ? { key, verdict: heat[key] } : null)} />
           )}
-          {shown && <VerdictCard verdict={shown} applied={!preview && last === shown} />}
+          {shown && <VerdictCard verdict={shown.verdict} applied={shown.applied} />}
           {report && report.violations.length > 0 && (
             <details className="mt-4 rounded-lg border border-red-pen/30 bg-white p-4 text-sm">
               <summary className="cursor-pointer font-medium text-red-pen">
@@ -314,16 +317,23 @@ export function SchedulePage() {
 // Куда можно поставить — списком. На плотной сетке годных клеток обычно
 // три-пять из сорока, и искать их прокруткой по подсветке утомительно.
 // Сначала те, что улучшают сетку, потом нейтральные, потом «хуже».
-function Options({ heat, dir, current, onPick, onHover }: {
+function Options({ heat, dir, lessons, current, onPick, onHover }: {
   heat: Record<string, Verdict>;
   dir: Directory;
+  lessons: LessonDTO[];
   current: string;
   onPick: (day: number, period: number) => void;
   onHover: (key: string | null) => void;
 }) {
   const rank = (v: Verdict) => (v.level === "ok" ? (v.gains.length ? 0 : 1) : 2);
+  // Обмен с таким же уроком (та же физкультура у того же учителя) формально
+  // «можно», но сетка не меняется — в списке он только сбивает с толку.
+  const same = (a: LessonDTO, b: LessonDTO) =>
+    a.group_id === b.group_id && a.subject_id === b.subject_id && a.teacher_id === b.teacher_id;
+  const noop = (v: Verdict) =>
+    v.swapped.length > 0 && v.swapped.every((i) => v.moved.some((m) => same(lessons[m], lessons[i])));
   const options = Object.entries(heat)
-    .filter(([key, v]) => key !== current && v.level !== "no")
+    .filter(([key, v]) => key !== current && v.level !== "no" && !noop(v))
     .sort(([, a], [, b]) => rank(a) - rank(b));
   const blocked = Object.values(heat).filter((v) => v.level === "no").length;
   const dayName = (n: number) => dir.days.find((d) => d.n === n)?.name ?? String(n);
