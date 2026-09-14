@@ -92,6 +92,12 @@ export function SchoolPage() {
   const running = Boolean(job && !done);
   const effective = Object.fromEntries(rules.map((r) => [r.key, strict[r.key] ?? r.default]));
 
+  // Залы заняты почти полностью при жёсткой норме «физкультура не подряд» —
+  // тогда часть предпочтений невыполнима по арифметике (замер 15.09.2026), и
+  // завуч должен узнать это у ползунка, а не после пяти минут составления.
+  const gymTight = Boolean(check && check.pe.seats > 0 && effective.pe_two_days === "hard"
+    && check.pe.hours / (check.pe.seats * check.pe.periods * Math.ceil(check.pe.days / 2)) >= 0.9);
+
   const effectivePrefs: Record<string, number> = {
     ...Object.fromEntries(preferences.map((p) => [p.key, prefs[p.key] ?? p.default])),
     light_day_of_week: prefs.light_day_of_week ?? 5,
@@ -204,6 +210,11 @@ export function SchoolPage() {
                       <span className="min-w-0 max-w-prose">
                         <span className="block font-medium">{pref.title}</span>
                         <span className="block text-small text-pencil">{pref.about}</span>
+                        {level > 0 && prefNote(pref.key, gymTight, prefs.light_day_of_week ?? 5) && (
+                          <span className="mt-1 block text-small text-worse">
+                            {prefNote(pref.key, gymTight, prefs.light_day_of_week ?? 5)}
+                          </span>
+                        )}
                         {pref.key === "light_day" && level > 0 && (
                           <label className="mt-2 flex items-center gap-2 text-small">
                             Какой день:
@@ -315,6 +326,20 @@ export function SchoolPage() {
 
 const STRICTNESS: [string, string][] = [["hard", "Жёстко"], ["soft", "Мягко"], ["off", "Не учитывать"]];
 const LEVELS: [number, string][] = [[0, "Не важно"], [1, "Немного"], [2, "Важно"], [3, "Очень"]];
+
+// Когда предпочтение не сработает не из-за алгоритма, а по арифметике школы.
+// Проверено 15.09.2026 на школе из примера: при забитых залах короткая пятница
+// дала 6,46 урока против 6,38 без неё, физкультура первым уроком — 9 против 9;
+// трудные предметы не с 6-го урока сработали: 62 → 33.
+function prefNote(key: string, gymTight: boolean, lightDay: number): string | null {
+  if (key === "light_day" && gymTight && [1, 3, 5].includes(lightDay))
+    return "Это день физкультуры, а залы заняты с первого урока до последнего — короче он не станет. Выберите вторник или четверг или прибавьте вместимость зала.";
+  if (key === "pe_first_period" && gymTight)
+    return "Пока залы заняты полностью, часть физкультуры обязана стоять первым уроком.";
+  if (key === "avoid_doubles")
+    return "Предмет на 6 часов при пятидневке без сдвоенного урока не поставить — там сдвоенный останется.";
+  return null;
+}
 
 // «1 урок», «3 урока», «72 урока», «5 уроков».
 const plural = (n: number, one: string, few: string, many: string) => {
