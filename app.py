@@ -51,6 +51,7 @@ st.set_page_config(page_title="ЛАД — составление расписа�
 inject_style()
 
 OUT_HTML = Path("out/raspisanie.html")
+OUT_HTML_PUBLIC = Path("out/raspisanie_public.html")
 STRICTNESS = {"жёстко": "hard", "мягко": "soft", "не применять": "off"}
 
 # ------------------------------------------------------------------ состояние
@@ -1342,6 +1343,11 @@ if tabs[8]:
                 OUT_HTML.parent.mkdir(parents=True, exist_ok=True)
                 html = render(school, result.lessons, minutes_spent=elapsed / 60)
                 OUT_HTML.write_text(html, encoding="utf-8")
+                # Обезличенный вариант — для показа посторонним (§8.4 CLAUDE.md):
+                # на сцене и в записи реальные ФИО учителей появляться не должны.
+                html_public = render(school, result.lessons, anonymize=True,
+                                     minutes_spent=elapsed / 60)
+                OUT_HTML_PUBLIC.write_text(html_public, encoding="utf-8")
                 save_schedule("out/schedule.json", school, result.lessons,
                               {"status": result.status, "seconds": elapsed})
                 st.session_state.result_of = job
@@ -1349,10 +1355,20 @@ if tabs[8]:
                 st.session_state.result_view = {
                     "report": check(school, result.lessons),
                     "html": html,
+                    "html_public": html_public,
                     "excel": excel_bytes(school, result.lessons),
+                    "excel_public": excel_bytes(school, result.lessons, anonymize=True),
                 }
             view = st.session_state.result_view
-            report, html = view["report"], view["html"]
+            hide_names = st.toggle(
+                "Скрыть ФИО учителей и название школы", key="anonymize",
+                help="Для показа посторонним: в сетке и в файлах учителя станут "
+                     "«Учитель 1», «Учитель 2»…, название школы уберётся.")
+            report = view["report"]
+            hide_names = hide_names and "html_public" in view  # результат из старой сессии
+            html = view["html_public"] if hide_names else view["html"]
+            shown_html = OUT_HTML_PUBLIC if hide_names else OUT_HTML
+            excel_file = view["excel_public"] if hide_names else view["excel"]
 
             # ГЛАВНЫЕ ТРИ ЦИФРЫ — то, ради чего всё делалось.
             #
@@ -1412,13 +1428,13 @@ if tabs[8]:
             # Через iframe, а не st.html: расписание несёт свои стили,
             # и в общем документе они протекли бы на всё приложение.
             # (st.components.v1.html объявлен устаревшим.)
-            st.iframe(OUT_HTML, height=700)
+            st.iframe(shown_html, height=700)
 
             XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
             st.markdown("**Забрать расписание**")
             col1, col2 = st.columns(2)
-            col1.download_button("Excel — для работы", view["excel"],
+            col1.download_button("Excel — для работы", excel_file,
                                  file_name="raspisanie.xlsx", mime=XLSX, width="stretch",
                                  icon=":material/table_view:",
                                  help="Четыре листа: по классам, по учителям, по кабинетам "

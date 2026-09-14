@@ -6,6 +6,7 @@
 """
 
 import json
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -202,6 +203,32 @@ def load_wishes() -> dict:
     return {}
 
 
+BACKUP_DIR = Path("data/backups")
+
+
+def _backup_if_shrinking(payload: dict) -> None:
+    """Сохранить копию файла, если запись опустошает непустую таблицу.
+
+    Найдено 14.09.2026: 08.09 автосохранение записало школу завуча с пустой
+    таблицей учителей — 52 строки пропали молча, остальные таблицы остались.
+    Причину по коду не восстановить, поэтому защита не от конкретного сбоя,
+    а от его последствия: прежде чем перезаписать таблицу с данными пустой,
+    откладываем старый файл. Законная очистка тоже оставит копию — это дёшево.
+    """
+    if not DATA_FILE.exists():
+        return
+    try:
+        old = json.loads(DATA_FILE.read_text(encoding="utf-8")).get("tables") or {}
+    except (OSError, ValueError):
+        return
+    new = payload["tables"]
+    if any(rows and not new.get(name) for name, rows in old.items()):
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        (BACKUP_DIR / f"school-{stamp}.json").write_text(
+            DATA_FILE.read_text(encoding="utf-8"), encoding="utf-8")
+
+
 def save_tables(tables: dict[str, pd.DataFrame], settings: dict, wishes: dict | None = None):
     DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -209,6 +236,7 @@ def save_tables(tables: dict[str, pd.DataFrame], settings: dict, wishes: dict | 
         "settings": settings,
         "wishes": wishes if wishes is not None else load_wishes(),
     }
+    _backup_if_shrinking(payload)
     DATA_FILE.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 

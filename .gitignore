@@ -10,3 +10,5 @@ out/
 # локальная обвязка Claude Code — симлинки на скиллы, машине деплоя не нужны
 .agents/
 .claude/
+
+data/backups/
