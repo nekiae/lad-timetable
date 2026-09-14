@@ -30,6 +30,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 import lad.solve as lad_solve  # noqa: E402
 from lad.solve import Rules, assign_rooms, solve  # noqa: E402
+from lad.quality import measure  # noqa: E402
 from lad.tables import build_school, tables_from_dict  # noqa: E402
 from lad.validate import check  # noqa: E402
 
@@ -90,6 +91,9 @@ def run(school, budget: float, seed: int, params: dict | None = None) -> dict:
             "class_spread": report.class_spread,
             "difficulty_spread": report.difficulty_spread,
         })
+        # Логика сверх норм (lad/quality.py): ровность дней, понедельник, разнесённость.
+        quality = measure(school, lessons)
+        row.update({k: v for k, v in quality.items() if k != "examples"})
     return row
 
 
@@ -126,6 +130,10 @@ def main() -> None:
         print(f"  seed={seed} first={row['first']}s zero={row['zero']}s norms={row.get('norms')} "
               f"gaps={row.get('teacher_gaps')} days={row.get('teacher_days')} spread={row.get('class_spread')} "
               f"diff={row.get('difficulty_spread')} conflicts={row.get('conflicts')} tail={row['tail']}", flush=True)
+        print(f"         логика: дни±3={row.get('classes_spread_3plus')} Пн-пик={row.get('monday_heavy')} "
+              f"2ч-подряд={row.get('adjacent_two')} 3ч-подряд={row.get('three_in_row')} "
+              f"день-ради-урока={row.get('teacher_single_days')} длинный-день={row.get('teacher_longest_day')}",
+              flush=True)
         if args.out:
             with open(args.out, "a", encoding="utf-8") as f:
                 f.write(json.dumps({"label": args.label, "school": Path(args.school).name,
@@ -138,6 +146,9 @@ def main() -> None:
 
     print(f"  медианы: first={median('first')}s zero={median('zero')}s norms={median('norms')} "
           f"gaps={median('teacher_gaps')} days={median('teacher_days')} spread={median('class_spread')}")
+    print(f"           дни±3={median('classes_spread_3plus')} Пн-пик={median('monday_heavy')} "
+          f"2ч-подряд={median('adjacent_two')} 3ч-подряд={median('three_in_row')} "
+          f"день-ради-урока={median('teacher_single_days')}")
 
 
 if __name__ == "__main__":
