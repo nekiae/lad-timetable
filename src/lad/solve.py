@@ -137,6 +137,18 @@ TUNING: dict = {
     # ресурс принято решать первым: стратегия ветвления по урокам физкультуры.
     # Действует на воркер с фиксированным поиском из портфеля CP-SAT. Кандидат.
     "pe_decisions_first": False,
+    # ЛОГИКА РАСПИСАНИЯ СВЕРХ НОРМ (lad/quality.py). Разобрано 14.09.2026 на сетке
+    # с нулём нарушений: у 17 классов из 24 дни отличаются на 3 урока, у 6 классов
+    # пик трудности в понедельник, 50 двухчасовых предметов в соседние дни,
+    # 27 выходов учителя ради одного урока. Веса — «очки» рядом с окном учителя (10).
+    # Вес штрафа за предмет на 2–3 часа в соседние дни (0 — выключено).
+    "subject_spacing": 0,
+    # Вес штрафа за день учителя с единственным уроком (0 — выключено).
+    "single_lesson_day": 0,
+    # Множитель веса разброса дней у класса (Weights.class_imbalance = 2 проигрывает окну = 10).
+    "balance_x": 1.0,
+    # Множитель веса «пик трудности не во вторник/среду/пятницу».
+    "peak_x": 1.0,
 }
 
 
@@ -707,6 +719,15 @@ def _solve(
             trackers["Окна у учителей"].append(gaps)
             trackers["Выходы в школу"].append(works)
 
+            # Выход в школу ради одного урока. single ≥ 2·works − уроков:
+            # 0 уроков → 0, 1 урок → 1, два и больше → не больше нуля. Ограничено
+            # только снизу — штраф сам опустит переменную, где урок не один.
+            if TUNING["single_lesson_day"]:
+                single = model.NewBoolVar(f"single_{teacher_id}_{day}")
+                model.Add(single >= 2 * works - sum(t_busy.values()))
+                penalties.append((single, int(TUNING["single_lesson_day"])))
+                trackers["Дней ради одного урока"].append(single)
+
     # --- SOFT-5 + коридор дня: равномерная нагрузка класса по дням.
     #
     # Одного штрафа за разброс мало. На большой школе солвер экономит его
@@ -770,11 +791,34 @@ def _solve(
 
         spread = model.NewIntVar(0, school.periods_per_day, f"spread_{class_id}")
         model.Add(spread == day_max - day_min)
-        penalties.append((spread, w.class_imbalance))
+        penalties.append((spread, max(1, round(w.class_imbalance * float(TUNING["balance_x"])))))
         trackers["Разброс дней"].append(spread)
 
     parallels = {c.id: c.parallel for c in school.classes}
     subject_names = {s.id: s.name for s in school.subjects}
+
+    # --- Разнесённость предмета по неделе (не норма — логика, lad/quality.py).
+    # Предмет на 2–3 часа в соседние дни: литература в понедельник и сразу
+    # во вторник — к завтрашнему уроку не подготовить домашнее. Предметам на
+    # 4–5 часов соседние дни неизбежны, их не трогаем. Подгруппа «2» идёт
+    # синхронно с «1», поэтому штраф берётся один раз — по первой.
+    if TUNING["subject_spacing"]:
+        for i, item in enumerate(school.load):
+            group = school.group(item.group_id)
+            if item.hours_per_week not in (2, 3) or group.part not in (None, "1"):
+                continue
+            on_day = {}
+            for day in days:
+                var = model.NewBoolVar(f"on_{i}_{day}")
+                model.AddMaxEquality(var, [x[i, s] for s in slots if s.day == day])
+                on_day[day] = var
+            for day, nxt in zip(days, days[1:]):
+                if nxt != day + 1:
+                    continue
+                adjacent = model.NewBoolVar(f"adj_{i}_{day}")
+                model.Add(adjacent >= on_day[day] + on_day[nxt] - 1)
+                penalties.append((adjacent, int(TUNING["subject_spacing"])))
+                trackers["Предмет в соседние дни"].append(adjacent)
 
     # --- Пожелания учителей: «нежелательно», а не «не могу».
     # Отличие от HARD-6 принципиальное. Если все пожелания сделать запретами,
@@ -1028,7 +1072,7 @@ def _solve(
                 for day in others:
                     excess = model.NewIntVar(0, max_day_score, f"excess_{class_id}_{day}")
                     model.Add(excess >= score_of_day[day] - peak_lo)
-                    penalties.append((excess, w.peak_day))
+                    penalties.append((excess, max(1, round(w.peak_day * float(TUNING["peak_x"])))))
 
     solver = cp_model.CpSolver()
     # Не меньше четырёх потоков, даже если ядер меньше, — см. available_cpus().
