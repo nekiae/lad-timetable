@@ -54,7 +54,7 @@ def _pairs(items: list[str]) -> dict:
     return {k: _value(v) for k, _, v in (item.partition("=") for item in items)}
 
 
-def run(school, budget: float, seed: int, params: dict | None = None) -> dict:
+def run(school, budget: float, seed: int, params: dict | None = None, rules: dict | None = None) -> dict:
     started = time.monotonic()
     marks: dict = {"first": None, "zero": None, "tail": {}}
 
@@ -70,7 +70,7 @@ def run(school, budget: float, seed: int, params: dict | None = None) -> dict:
             else:
                 marks["tail"] = {"at": round(now, 1), **{k: v for k, v in p.norms.items() if v}}
 
-    result = solve(school, max_seconds=budget, rules=Rules(), on_progress=on_progress,
+    result = solve(school, max_seconds=budget, rules=Rules(**(rules or {})), on_progress=on_progress,
                    params={"random_seed": seed, **(params or {})})
     lessons = assign_rooms(school, result.lessons) if result.ok else []
     report = check(school, lessons) if lessons else None
@@ -108,9 +108,11 @@ def main() -> None:
                         help="ручки lad.solve.TUNING, например draft_comfort=true draft_share=0.6")
     parser.add_argument("--params", nargs="*", default=[], metavar="КЛЮЧ=ЗНАЧЕНИЕ",
                         help="параметры CP-SAT, например num_workers=8")
+    parser.add_argument("--rules", nargs="*", default=[], metavar="НОРМА=СТРОГОСТЬ",
+                        help="строгость норм, например pe_two_days=soft (hard/soft/off)")
     args = parser.parse_args()
 
-    tune, params = _pairs(args.tune), _pairs(args.params)
+    tune, params, rules = _pairs(args.tune), _pairs(args.params), _pairs(args.rules)
     unknown = set(tune) - set(lad_solve.TUNING)
     if unknown:
         sys.exit(f"нет таких ручек в TUNING: {sorted(unknown)}; есть {sorted(lad_solve.TUNING)}")
@@ -121,11 +123,11 @@ def main() -> None:
     if problems:
         sys.exit(f"данные с проблемами: {problems[:3]}")
     print(f"{args.label}: {Path(args.school).name}, {len(school.classes)} кл., бюджет {args.budget:.0f} с, "
-          f"сиды {args.seeds}, tune={tune or '—'}, params={params or '—'}", flush=True)
+          f"сиды {args.seeds}, tune={tune or '—'}, params={params or '—'}, rules={rules or '—'}", flush=True)
 
     rows = []
     for seed in args.seeds:
-        row = run(school, args.budget, seed, params)
+        row = run(school, args.budget, seed, params, rules)
         rows.append(row)
         print(f"  seed={seed} first={row['first']}s zero={row['zero']}s norms={row.get('norms')} "
               f"gaps={row.get('teacher_gaps')} days={row.get('teacher_days')} spread={row.get('class_spread')} "
@@ -137,7 +139,7 @@ def main() -> None:
         if args.out:
             with open(args.out, "a", encoding="utf-8") as f:
                 f.write(json.dumps({"label": args.label, "school": Path(args.school).name,
-                                    "budget": args.budget, "tune": tune, "params": params, **row},
+                                    "budget": args.budget, "tune": tune, "params": params, "rules": rules, **row},
                                    ensure_ascii=False) + "\n")
 
     def median(key: str):
