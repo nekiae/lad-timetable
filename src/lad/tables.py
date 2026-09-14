@@ -1155,3 +1155,32 @@ def next_step(status: list[dict]) -> dict | None:
         if not step["done"] and not step.get("optional"):
             return step
     return None
+
+
+def rooms_verdict(tables: dict[str, pd.DataFrame]) -> list[str]:
+    """Хватает ли кабинетов — по одним лишь классам и кабинетам.
+
+    Класс учится без окон, поэтому на первом уроке заняты ВСЕ классы разом,
+    и каждому нужна комната. Это чистая арифметика, для неё не нужны ни
+    нагрузка, ни учителя, — а значит, ответ можно дать в самом начале ввода.
+    (Копия функции из app.py для веб-приложения; app.py уходит после 19.09.)
+    """
+    classes = [c for c in tables["classes"].get("класс", []) if str(c).strip()]
+    if not classes or not len(tables["rooms"]):
+        return []
+
+    seats = 0
+    for _, row in tables["rooms"].iterrows():
+        if not str(row.get("кабинет", "")).strip():
+            continue
+        seats += max(1, int(row.get("классов сразу") or 1))
+
+    if seats >= len(classes):
+        return []
+    return [
+        f"Классов {len(classes)}, а кабинеты вмещают {seats} за раз. "
+        "Класс учится без окон, поэтому на первом уроке заняты все классы "
+        "сразу — и мест нужно не меньше, чем классов. Расписания в одну смену "
+        "не существует: добавьте кабинеты или переведите часть классов "
+        "во вторую смену."
+    ]

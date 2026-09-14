@@ -9,6 +9,7 @@ import { Shell } from "./Shell";
 import { SchoolsPage } from "./pages/SchoolsPage";
 import { SchoolPage } from "./pages/SchoolPage";
 import { SchedulePage } from "./pages/SchedulePage";
+import { DataPage } from "./pages/data/DataPage";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
@@ -16,6 +17,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       <Routes>
         <Route path="/" element={<SchoolsPage />} />
         <Route path="/s/:id" element={<Shell />}>
+          <Route path="data" element={<DataPage />} />
           <Route index element={<SchoolPage />} />
           <Route path="schedule" element={<SchedulePage />} />
         </Route>

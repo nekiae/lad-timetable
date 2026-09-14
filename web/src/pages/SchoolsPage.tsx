@@ -18,7 +18,7 @@ export function SchoolsPage() {
   async function create(fromExample: boolean) {
     setBusy(true);
     const { id } = await api.createSchool("", fromExample);
-    navigate(`/s/${id}`);
+    navigate(fromExample ? `/s/${id}` : `/s/${id}/data`);
   }
 
   return (

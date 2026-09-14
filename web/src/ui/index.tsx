@@ -162,6 +162,22 @@ export function Reasons({ tone, items }: {
   );
 }
 
+// Поле формы с подписью сверху и пояснением снизу.
+export const inputClass =
+  "w-full rounded border border-rule bg-sheet px-3 py-2 hover:border-pencil focus:border-pen focus:outline-none";
+
+export function Field({ label, hint, children, className }: {
+  label: string; hint?: ReactNode; children: ReactNode; className?: string;
+}) {
+  return (
+    <label className={cx("block", className)}>
+      <span className="mb-1 block font-medium">{label}</span>
+      {children}
+      {hint && <span className="mt-1 block text-small text-pencil">{hint}</span>}
+    </label>
+  );
+}
+
 // Пустой экран: одна фраза и одно действие.
 export function EmptyState({ text, action }: { text: string; action?: ReactNode }) {
   return (

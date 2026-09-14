@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import ROOT, db
+from .entry import router as entry_router
 from .jobs import JOBS, start_job
 
 from lad import explain  # noqa: E402
@@ -32,6 +33,7 @@ DAY_NAMES = {1: "Понедельник", 2: "Вторник", 3: "Среда", 
              6: "Суббота"}
 
 app = FastAPI(title="ЛАД", version="0.1")
+app.include_router(entry_router)  # ввод данных — server/entry.py
 
 
 # ---------------------------------------------------------------- помощники

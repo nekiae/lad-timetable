@@ -28,6 +28,7 @@ export function Shell() {
             <span className="truncate text-small text-pencil">{name}</span>
           </div>
           <nav className="flex gap-6">
+            <NavLink to={`/s/${id}/data`} className={tab}>Данные</NavLink>
             <NavLink to={`/s/${id}`} end className={tab}>Составление</NavLink>
             <NavLink to={`/s/${id}/schedule`} className={tab}>Расписание</NavLink>
           </nav>

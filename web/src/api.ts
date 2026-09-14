@@ -6,6 +6,29 @@ export type Doc = {
   wishes: Record<string, unknown>;
 };
 
+export type InputStep = {
+  key: string;
+  title: string;
+  why: string;
+  empty: string;
+  count: number;
+  done: boolean;
+  blocked_by: string[];
+  optional?: boolean;
+};
+
+export type InputState = {
+  steps: InputStep[];
+  next: string | null;
+  rooms_verdict: string[];
+  divided: string[];
+  teacher_hours: Record<string, number>;
+  options: { room_kinds: string[]; levels: string[]; lesson_kinds: string[] };
+};
+
+/** Ответ действия ввода: школа целиком после сохранения. */
+export type Saved = { doc: Doc; revision: number };
+
 export type LessonDTO = {
   day: number;
   period: number;
@@ -114,6 +137,20 @@ export const api = {
   check: (id: string) =>
     call<{ problems: string[]; warnings: string[]; stats: Record<string, number> }>(
       "GET", `/schools/${id}/check`),
+  input: (id: string) => call<InputState>("GET", `/schools/${id}/input`),
+  generateClasses: (id: string, counts: Record<string, number>, sizes: Record<string, number>) =>
+    call<Saved & { added: number }>("POST", `/schools/${id}/classes/generate`, { counts, sizes }),
+  generateRooms: (id: string, regular: number, special: Record<string, number>) =>
+    call<Saved & { added: number }>("POST", `/schools/${id}/rooms/generate`, { regular, special }),
+  subjectsFromPlan: (id: string) =>
+    call<Saved & { added: number }>("POST", `/schools/${id}/subjects/from-plan`),
+  loadFromPlan: (id: string) =>
+    call<Saved & { added: number; unknown: string[] }>("POST", `/schools/${id}/load/from-plan`),
+  assign: (id: string, body: { subject: string; teacher: string; classes: string[];
+                               previous?: string | null; hours?: number | null }) =>
+    call<Saved & { skipped: string[] }>("POST", `/schools/${id}/load/assign`, body),
+  spread: (id: string, subject: string, teachers: string[]) =>
+    call<Saved>("POST", `/schools/${id}/load/spread`, { subject, teachers }),
   rules: () =>
     call<{
       rules: { key: string; title: string; source: string | null; default: string }[];
