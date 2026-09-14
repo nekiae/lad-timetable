@@ -1,0 +1,13 @@
+# Railway: один сервис из Dockerfile. Перед первым деплоем в панели сервиса:
+#   • Volume, смонтированный в /data — там база школ (LAD_DB=/data/lad.sqlite3),
+#     без тома школы пропадают при каждом деплое;
+#   • переменная LAD_PASSWORD — общий пароль на приложение (server/main.py);
+#   • не меньше 4 vCPU — меньше солвер не тянет (available_cpus в solve.py).
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/api/health"
+healthcheckTimeout = 60
+restartPolicyType = "ON_FAILURE"

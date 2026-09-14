@@ -1,0 +1,13 @@
+# Без этого файла COPY web/ затирал node_modules, установленные в образе под Linux,
+# модулями с мака (esbuild с бинарником не той платформы — сборка падает),
+# и тащил в образ .venv, .git и локальную базу со школами.
+.git
+.venv
+**/__pycache__
+web/node_modules
+web/dist
+web/tsconfig.tsbuildinfo
+data/lad.sqlite3
+data/backups
+data/raw
+out
