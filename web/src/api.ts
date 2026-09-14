@@ -123,6 +123,21 @@ export type Progress = {
   bound: number | null;
   metrics: Record<string, number>;
   gap: number | null;
+  /** Этап: черновик «ноль нарушений норм» или доводка удобства. */
+  phase: "draft" | "polish";
+  /** Снимок лучшей сетки: [строка нагрузки, день, урок]; не в каждом событии. */
+  grid: number[][] | null;
+  /** Секунды от старта задачи — общий отсчёт для всех этапов. */
+  wall: number;
+};
+
+/** Справочник для живой сетки: что за урок за строкой нагрузки из снимков. */
+export type SearchSetup = {
+  classes: string[];
+  class_ids: string[];
+  days: number[];
+  periods: number;
+  load: { classes: string[]; subject: string }[];
 };
 
 export type SolveDone = {
@@ -203,8 +218,10 @@ export const api = {
     call<{ id: string }>("POST", `/schools/${id}/schedules`, { lessons }),
 
   /** Ход составления: снимки прогресса, затем итог. Возвращает функцию отписки. */
-  watch(jobId: string, onProgress: (p: Progress) => void, onDone: (d: SolveDone) => void) {
+  watch(jobId: string, onProgress: (p: Progress) => void, onDone: (d: SolveDone) => void,
+        onSetup?: (s: SearchSetup) => void) {
     const source = new EventSource(`/api/jobs/${jobId}/events`);
+    if (onSetup) source.addEventListener("setup", (e) => onSetup(JSON.parse((e as MessageEvent).data)));
     source.addEventListener("progress", (e) => onProgress(JSON.parse((e as MessageEvent).data)));
     source.addEventListener("done", (e) => {
       source.close();

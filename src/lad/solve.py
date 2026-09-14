@@ -155,6 +155,12 @@ class Progress:
     penalty: int | None = None
     bound: int | None = None
     metrics: dict[str, int] = field(default_factory=dict)
+    # Этап конвейера solve(): "draft" — черновик, цель одна: ноль нарушений норм;
+    # "polish" — доводка удобства. Нужен, чтобы показать, ЧТО солвер сейчас улучшает.
+    phase: str = "polish"
+    # Снимок лучшей сетки: [строка нагрузки, день, урок] на каждый поставленный урок.
+    # Не на каждое решение, а не чаще раза в секунду — см. _Reporter.
+    grid: list[list[int]] | None = None
 
     @property
     def gap(self) -> float | None:
@@ -173,13 +179,17 @@ class _Reporter(cp_model.CpSolverSolutionCallback):
     """
 
     def __init__(self, trackers: dict[str, list], budget: float,
-                 on_progress, should_stop, started_at: float):
+                 on_progress, should_stop, started_at: float,
+                 phase: str = "polish", grid_vars: list | None = None):
         super().__init__()
         self._trackers = trackers
         self._budget = budget
         self._on_progress = on_progress
         self._should_stop = should_stop
         self._started = started_at
+        self._phase = phase
+        self._grid_vars = grid_vars or []
+        self._last_grid = 0.0
         self.solutions = 0
 
     def on_solution_callback(self) -> None:
@@ -190,6 +200,14 @@ class _Reporter(cp_model.CpSolverSolutionCallback):
                 metrics[label] = sum(int(self.Value(v)) for v in variables)
             except Exception:
                 continue
+        # Снимок сетки — не чаще раза в секунду. Прочитать 17 тысяч переменных
+        # дёшево, но решения в начале поиска сыплются десятками в секунду, и
+        # слать каждую сетку в браузер значит тормозить и солвер, и страницу.
+        grid = None
+        now = time.monotonic()
+        if self._on_progress and self._grid_vars and (self.solutions == 1 or now - self._last_grid >= 1.0):
+            grid = [[i, slot.day, slot.period] for i, slot, var in self._grid_vars if self.Value(var)]
+            self._last_grid = now
         if self._on_progress:
             self._on_progress(Progress(
                 stage="improve",
@@ -199,6 +217,8 @@ class _Reporter(cp_model.CpSolverSolutionCallback):
                 penalty=int(self.ObjectiveValue()) if self._trackers else None,
                 bound=int(self.BestObjectiveBound()) if self._trackers else None,
                 metrics=metrics,
+                phase=self._phase,
+                grid=grid,
             ))
         if self._should_stop and self._should_stop():
             self.StopSearch()
@@ -278,6 +298,7 @@ def _solve(
     soft_norms: bool = False,
     norms_only: bool = False,
     norm_cap: int | None = None,
+    phase: str = "polish",
     hint: list[Lesson] | None = None,
 ) -> SolveResult:
     """Составить расписание.
@@ -1004,7 +1025,7 @@ def _solve(
         warmup = max_seconds
         if on_progress:
             on_progress(Progress(stage="search", seconds=0.0, budget=max_seconds,
-                                 solutions=0))
+                                 solutions=0, phase=phase))
         solver.parameters.max_time_in_seconds = warmup
         # Останавливаемся на ПЕРВОМ найденном расписании. Без этого солвер
         # продолжает работу и на 45-секундном бюджете то укладывался за 9 секунд,
@@ -1026,6 +1047,9 @@ def _solve(
                     budget=max_seconds, solutions=1,
                     metrics={label: sum(int(solver.Value(v)) for v in variables)
                              for label, variables in trackers.items()},
+                    phase=phase,
+                    grid=[[i, slot.day, slot.period] for (i, slot), var in x.items()
+                          if solver.Value(var)],
                 ))
 
         # Решение первой фазы забираем СРАЗУ, а не пересчитываем потом.
@@ -1046,7 +1070,8 @@ def _solve(
             objective = sum(trackers["Нарушений норм"])
         else:
             objective = sum(var * weight for var, weight in penalties)
-        reporter = _Reporter(dict(trackers), max_seconds, on_progress, should_stop, started_at)
+        reporter = _Reporter(dict(trackers), max_seconds, on_progress, should_stop, started_at,
+                             phase=phase, grid_vars=[(i, slot, var) for (i, slot), var in x.items()])
         gap_vars = trackers.get("Окна у учителей") or []
 
         if hierarchical and gap_vars:
@@ -1161,7 +1186,7 @@ def _solve(
         solver.parameters.max_time_in_seconds = max_seconds
         if on_progress:
             on_progress(Progress(stage="search", seconds=0.0, budget=max_seconds,
-                                 solutions=0))
+                                 solutions=0, phase=phase))
         status = solver.Solve(model)
 
     lessons: list[Lesson] = []
@@ -1237,7 +1262,7 @@ def solve(
     # лишнего не съест. Половины не хватало: замерено 14.09.2026, один сид из трёх
     # доходил до нуля только на 106-й секунде, а обёртка обрывала его на 60-й.
     draft = _solve(school, max_seconds=max_seconds * 0.8, optimize=True, soft_norms=True,
-                   norms_only=True, on_progress=on_progress, **common)
+                   norms_only=True, on_progress=on_progress, phase="draft", **common)
     if not draft.ok:
         return draft
 

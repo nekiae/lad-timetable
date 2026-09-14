@@ -47,10 +47,27 @@ def _worker(doc: dict, options: dict, events, stop_flag) -> None:
         rules = Rules(**{k: v for k, v in (options.get("rules") or {}).items() if k in known})
         pinned = lessons_from_dict(options["pinned"]) if options.get("pinned") else None
 
-        def on_progress(snapshot) -> None:
-            events.put({"type": "progress", **asdict(snapshot), "gap": snapshot.gap})
+        # Справочник для живой сетки в браузере: что за урок стоит за строкой
+        # нагрузки i из снимков хода поиска. Отдаётся один раз до начала.
+        subjects = {s.id: s.name for s in school.subjects}
+        events.put({
+            "type": "setup",
+            "classes": [c.name for c in school.classes],
+            "class_ids": [c.id for c in school.classes],
+            "days": sorted(d for d, kind in school.day_kinds.items() if kind.value == "lessons"),
+            "periods": school.periods_per_day,
+            "load": [{"classes": school.group(item.group_id).class_ids,
+                      "subject": subjects.get(item.subject_id, "")} for item in school.load],
+        })
 
         started = time.monotonic()
+
+        def on_progress(snapshot) -> None:
+            # wall — от старта задачи. У каждого этапа solve() свой отсчёт seconds
+            # с нуля, и график по нему рисовал бы доводку поверх черновика.
+            events.put({"type": "progress", **asdict(snapshot), "gap": snapshot.gap,
+                        "wall": time.monotonic() - started})
+
         result = solve(school, max_seconds=float(options.get("budget") or 300),
                        weights=weights, rules=rules, pinned=pinned,
                        on_progress=on_progress, should_stop=stop_flag.is_set)
@@ -76,6 +93,7 @@ class Job:
     started_at: float = field(default_factory=time.time)
     history: list[dict] = field(default_factory=list)
     result: dict | None = None
+    setup: dict | None = None  # справочник для живой сетки (см. _worker)
     schedule_id: str | None = None
     finished: bool = False
 
@@ -118,6 +136,8 @@ class Job:
                 continue
             if event["type"] == "progress":
                 self.history.append(event)
+            elif event["type"] == "setup":
+                self.setup = event
             else:
                 self.result = event
                 break

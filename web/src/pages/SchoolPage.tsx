@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
-import { api, type Progress, type SolveDone } from "../api";
-import { Button, ButtonLink, Choice, Notice, Panel, Segmented, Stat } from "../ui";
+import { api, type Progress, type SearchSetup, type SolveDone } from "../api";
+import { Button, ButtonLink, Choice, Notice, Segmented } from "../ui";
+import { SearchView, type Grids } from "./SearchView";
 
 const BUDGETS = [
   { value: 120, label: "2 минуты" },
@@ -25,6 +26,11 @@ export function SchoolPage() {
   const [first, setFirst] = useState<Progress>();
   const [done, setDone] = useState<SolveDone>();
   const [elapsed, setElapsed] = useState(0);
+  // Для живого показа поиска: весь ход (без сеток — они тяжёлые), справочник
+  // уроков и две последние сетки, чтобы подсветить, что переставлено.
+  const [timeline, setTimeline] = useState<Progress[]>([]);
+  const [setup, setSetup] = useState<SearchSetup>();
+  const [grids, setGrids] = useState<Grids>();
   const unwatch = useRef<() => void>();
 
   useEffect(() => {
@@ -44,6 +50,9 @@ export function SchoolPage() {
     setDone(undefined);
     setProgress(undefined);
     setFirst(undefined);
+    setTimeline([]);
+    setSetup(undefined);
+    setGrids(undefined);
     const { job_id } = await api.solve(id, { budget, preset });
     setJob(job_id);
     unwatch.current = api.watch(
@@ -51,11 +60,14 @@ export function SchoolPage() {
       (p) => {
         setProgress(p);
         if (Object.keys(p.metrics).length) setFirst((f) => f ?? p);
+        setTimeline((t) => [...t, { ...p, grid: null }]);
+        if (p.grid) setGrids((g) => ({ current: p.grid!, previous: g?.current ?? null }));
       },
       (d) => {
         setDone(d);
         if (d.type === "result" && d.schedule_id) navigate(`/s/${id}/schedule`);
       },
+      setSetup,
     );
   }
 
@@ -66,7 +78,7 @@ export function SchoolPage() {
   const blocked = Boolean(check?.problems.length) || empty;
 
   return (
-    <div className="max-w-3xl px-4 py-10 md:px-8">
+    <div className="max-w-4xl px-4 py-10 md:px-8">
       <h1 className="text-title">Составление</h1>
 
       {check && (
@@ -102,20 +114,28 @@ export function SchoolPage() {
         </Notice>
       )}
 
-      <fieldset disabled={running} className="mt-8 grid gap-8 md:grid-cols-2">
-        <Choice name="preset" legend="Чьё удобство важнее" value={preset}
-                options={presets.map((p) => ({ value: p.name, label: p.name, about: p.about }))}
-                onChange={setPreset} />
-        <div>
-          <Segmented legend="Сколько искать" value={budget} options={BUDGETS} onChange={setBudget} />
-          <p className="mt-3 max-w-prose text-small text-pencil">
-            Законная сетка появляется за секунды. Остальное время система убирает окна
-            и выравнивает дни — чем дольше, тем удобнее.
-          </p>
-        </div>
-      </fieldset>
+      {/* Пока идёт поиск, настройки сворачиваются в строку: иначе живой показ
+          уходит ниже первого экрана, а смотреть надо именно на него. */}
+      {running ? (
+        <p className="mt-6 text-pencil">
+          {preset}, {BUDGETS.find((b) => b.value === budget)?.label ?? `${budget} с`}.
+        </p>
+      ) : (
+        <fieldset disabled={running} className="mt-8 grid gap-8 md:grid-cols-2">
+          <Choice name="preset" legend="Чьё удобство важнее" value={preset}
+                  options={presets.map((p) => ({ value: p.name, label: p.name, about: p.about }))}
+                  onChange={setPreset} />
+          <div>
+            <Segmented legend="Сколько искать" value={budget} options={BUDGETS} onChange={setBudget} />
+            <p className="mt-3 max-w-prose text-small text-pencil">
+              Законная сетка появляется за секунды. Остальное время система убирает окна
+              и выравнивает дни — чем дольше, тем удобнее.
+            </p>
+          </div>
+        </fieldset>
+      )}
 
-      <div className="mt-8">
+      <div className={running ? "mt-4" : "mt-8"}>
         {empty ? null : !running ? (
           <Button variant="primary" size="lg" disabled={blocked || !check} onClick={start}>
             Составить расписание
@@ -128,25 +148,10 @@ export function SchoolPage() {
       </div>
 
       {running && (
-        <Panel className="mt-8 p-5">
-          <div aria-live="polite">
-            <div className="h-1 overflow-hidden rounded-full bg-rule">
-              <div className="h-full bg-pen transition-[width] duration-500"
-                   style={{ width: `${Math.min(100, (elapsed / budget) * 100)}%` }} />
-            </div>
-            <p className="mt-3 text-small text-pencil">
-              {Math.round(elapsed)} с из {budget}.{" "}
-              {progress?.solutions ? `Найдено вариантов: ${progress.solutions}.` : "Ищу первую законную сетку…"}
-            </p>
-          </div>
-          {progress && Object.keys(progress.metrics).length > 0 && (
-            <dl className="mt-5 grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
-              {Object.entries(progress.metrics).map(([label, value]) => (
-                <Stat key={label} label={label} value={value} was={first?.metrics[label]} />
-              ))}
-            </dl>
-          )}
-        </Panel>
+        <div className="mt-8">
+          <SearchView budget={budget} elapsed={elapsed} progress={progress} first={first}
+                      timeline={timeline} setup={setup} grids={grids} />
+        </div>
       )}
 
       {done?.type === "problems" && (

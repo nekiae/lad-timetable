@@ -217,7 +217,11 @@ async def events(job_id: str) -> StreamingResponse:
 
     async def stream():
         sent = 0
+        setup_sent = False
         while True:
+            if job.setup and not setup_sent:
+                yield f"event: setup\ndata: {json.dumps(job.setup, ensure_ascii=False)}\n\n"
+                setup_sent = True
             while sent < len(job.history):
                 yield f"event: progress\ndata: {json.dumps(job.history[sent], ensure_ascii=False)}\n\n"
                 sent += 1
