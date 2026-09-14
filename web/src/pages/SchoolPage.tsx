@@ -178,8 +178,7 @@ export function SchoolPage() {
       )}
 
       {!running && check && !empty && check.pe.hours > 0 && check.pe.seats > 0 && (
-        <GymCard id={id} pe={check.pe} consecutive={effective.pe_two_days !== "hard"}
-                 onAllowConsecutive={() => setRule("pe_two_days", "soft")} />
+        <GymCard id={id} pe={check.pe} consecutive={effective.pe_two_days !== "hard"} />
       )}
 
       {!running && preferences.length > 0 && !empty && (
@@ -328,12 +327,19 @@ const plural = (n: number, one: string, few: string, many: string) => {
 // бывает забит с первого урока до последнего. Тогда в эти дни классы учатся
 // до 8-го урока, а во вторник и четверг — по 5: дни неровные не по вине
 // алгоритма, а по арифметике залов (замер 14.09.2026). Здесь эта арифметика
-// показана завучу вместе с двумя рычагами, которыми школы и пользуются.
-function GymCard({ id, pe, consecutive, onAllowConsecutive }: {
+// показана завучу вместе с рычагом, который по замеру работает.
+//
+// Кнопки «разрешить физкультуру два дня подряд» здесь НЕТ, и это не забыто.
+// Замер 15.09.2026 (школа из примера, 120 с, 3 сида): норма «мягко» дала
+// 3–4 нарушения вместо 0 и окна учителей 170–228 вместо 67 — солвер теряет
+// подсказку «физкультура в пн/ср/пт», а каждый случай подряд всё равно считается
+// нарушением. Зал на 3 класса вместо 2 дал 0 нарушений за 5–7 с вместо 21 с,
+// окна 55–63 и вдвое меньше неровных дней. Переключатель нормы остался в «Как
+// строго применять нормы» — но советовать его как выход нельзя.
+function GymCard({ id, pe, consecutive }: {
   id: string;
   pe: { hours: number; gyms: number; seats: number; periods: number; days: number };
   consecutive: boolean;
-  onAllowConsecutive: () => void;
 }) {
   const days = consecutive ? pe.days : Math.ceil(pe.days / 2);
   const places = pe.seats * pe.periods * days;
@@ -353,7 +359,9 @@ function GymCard({ id, pe, consecutive, onAllowConsecutive }: {
       {tight && (
         <p className="mt-2 max-w-prose text-small">
           Поэтому дни у классов выходят неровными: в дни физкультуры залы заняты с первого урока до последнего,
-          и часть классов учится до {pe.periods}-го урока, а в остальные дни — по 5.
+          и часть классов учится до {pe.periods}-го урока, а в остальные дни — по 5. Если в зале можно заниматься
+          ещё одному классу одновременно — укажите это: на примере школы на 24 класса это вдвое сократило
+          неровные дни и окна учителей.
         </p>
       )}
       <div className="mt-3 flex flex-wrap gap-2">
@@ -361,15 +369,11 @@ function GymCard({ id, pe, consecutive, onAllowConsecutive }: {
               className="inline-flex items-center rounded border border-rule bg-sheet px-3 py-1.5 text-small font-medium hover:border-pencil">
           Изменить вместимость залов
         </Link>
-        {tight && !consecutive && (
-          <Button onClick={onAllowConsecutive} className="!px-3 !py-1.5 text-small">
-            Разрешить два дня подряд, когда иначе нельзя
-          </Button>
-        )}
       </div>
       {consecutive && (
-        <p className="mt-2 text-small text-pencil">
-          Физкультура два дня подряд разрешена «мягко»: система поставит так, только если иначе нельзя, и покажет каждый случай.
+        <p className="mt-2 text-small text-worse">
+          Физкультура два дня подряд разрешена. На замере это сделало расписание хуже: больше окон у учителей
+          и нарушения нормы. Лучше вернуть «Жёстко» и прибавить вместимость зала.
         </p>
       )}
     </section>
