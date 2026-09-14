@@ -205,9 +205,11 @@ export const api = {
     call<{
       rules: { key: string; title: string; source: string | null; default: string }[];
       presets: { name: string; about: string }[];
+      /** Предпочтения школы: уровень 0–3 («не важно» … «очень важно»). */
+      preferences: { key: string; group: string; title: string; about: string; default: number }[];
     }>("GET", "/rules"),
   solve: (id: string, body: { budget: number; preset: string; rules?: Record<string, string>;
-                               pinned?: LessonDTO[] }) =>
+                               prefs?: Record<string, number>; pinned?: LessonDTO[] }) =>
     call<{ job_id: string }>("POST", `/schools/${id}/solve`, body),
   stop: (jobId: string) => call<{ ok: boolean }>("POST", `/jobs/${jobId}/stop`),
   latest: (id: string) => call<Schedule>("GET", `/schools/${id}/schedules/latest`),

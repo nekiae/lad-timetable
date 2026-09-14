@@ -31,7 +31,7 @@ _CTX = mp.get_context("spawn")
 def _worker(doc: dict, options: dict, events, stop_flag) -> None:
     """Тело дочернего процесса: собрать школу, составить, отдать результат."""
     try:
-        from lad.solve import PRESETS, Rules, Weights, assign_rooms, solve
+        from lad.solve import PRESETS, Rules, Weights, assign_rooms, solve, weights_from_prefs
         from lad.storage import lessons_from_dict, lessons_to_dict
         from lad.tables import build_school, tables_from_dict
 
@@ -43,6 +43,8 @@ def _worker(doc: dict, options: dict, events, stop_flag) -> None:
 
         preset = PRESETS.get(options.get("preset") or "Поровну", PRESETS["Поровну"])
         weights = Weights(**options["weights"]) if options.get("weights") else preset["weights"]
+        # Предпочтения школы (ползунки) — поверх весов выбранного режима.
+        weights = weights_from_prefs(weights, options.get("prefs"))
         known = set(Rules.__dataclass_fields__)
         rules = Rules(**{k: v for k, v in (options.get("rules") or {}).items() if k in known})
         pinned = lessons_from_dict(options["pinned"]) if options.get("pinned") else None

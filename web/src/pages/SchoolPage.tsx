@@ -20,6 +20,10 @@ export function SchoolPage() {
   const [check, setCheck] = useState<Awaited<ReturnType<typeof api.check>>>();
   const [presets, setPresets] = useState<{ name: string; about: string }[]>([]);
   const [rules, setRules] = useState<{ key: string; title: string; source: string | null; default: string }[]>([]);
+  const [preferences, setPreferences] = useState<{ key: string; group: string; title: string; about: string; default: number }[]>([]);
+  // Предпочтения школы: уровень 0–3 по каждому и какой день короткий. Хранятся
+  // в данных школы (settings.prefs), как и строгость норм.
+  const [prefs, setPrefs] = useState<Record<string, number>>({});
   // Строгость норм, выбранная школой. Хранится в данных школы (settings.rules):
   // это вход составления, как нагрузка, и должен переживать перезагрузку.
   const [strict, setStrict] = useState<Record<string, string>>({});
@@ -43,10 +47,12 @@ export function SchoolPage() {
     api.rules().then((r) => {
       setPresets(r.presets);
       setRules(r.rules);
+      setPreferences(r.preferences);
     });
     api.school(id).then((s) => {
       setDoc(s.doc);
       setStrict((s.doc.settings.rules as Record<string, string>) ?? {});
+      setPrefs((s.doc.settings.prefs as Record<string, number>) ?? {});
     });
     return () => unwatch.current?.();
   }, [id]);
@@ -65,7 +71,7 @@ export function SchoolPage() {
     setTimeline([]);
     setSetup(undefined);
     setGrids(undefined);
-    const { job_id } = await api.solve(id, { budget, preset, rules: effective });
+    const { job_id } = await api.solve(id, { budget, preset, rules: effective, prefs: effectivePrefs });
     setJob(job_id);
     unwatch.current = api.watch(
       job_id,
@@ -85,6 +91,20 @@ export function SchoolPage() {
 
   const running = Boolean(job && !done);
   const effective = Object.fromEntries(rules.map((r) => [r.key, strict[r.key] ?? r.default]));
+
+  const effectivePrefs: Record<string, number> = {
+    ...Object.fromEntries(preferences.map((p) => [p.key, prefs[p.key] ?? p.default])),
+    light_day_of_week: prefs.light_day_of_week ?? 5,
+  };
+
+  function setPref(key: string, value: number) {
+    const next = { ...prefs, [key]: value };
+    setPrefs(next);
+    if (!doc) return;
+    const saved = { ...doc, settings: { ...doc.settings, prefs: next } };
+    setDoc(saved);
+    api.saveSchool(id, saved);
+  }
 
   function setRule(key: string, value: string) {
     const next = { ...strict, [key]: value };
@@ -160,6 +180,62 @@ export function SchoolPage() {
       {!running && check && !empty && check.pe.hours > 0 && check.pe.seats > 0 && (
         <GymCard id={id} pe={check.pe} consecutive={effective.pe_two_days !== "hard"}
                  onAllowConsecutive={() => setRule("pe_two_days", "soft")} />
+      )}
+
+      {!running && preferences.length > 0 && !empty && (
+        <details open className="mt-8 rounded-lg border border-rule bg-sheet p-4">
+          <summary className="cursor-pointer text-heading">
+            Предпочтения школы
+            {preferences.some((p) => (prefs[p.key] ?? p.default) !== p.default) && (
+              <span className="ml-2 text-small font-normal text-worse">изменено школой</span>
+            )}
+          </summary>
+          <p className="mt-2 max-w-prose text-small text-pencil">
+            Что важнее, когда всё сразу не выходит. «Важно» — как в выбранном режиме выше. Санитарные нормы
+            всё равно закрываются первыми, предпочтения работают после них.
+          </p>
+          {[...new Set(preferences.map((p) => p.group))].map((group) => (
+            <div key={group} className="mt-5">
+              <p className="font-semibold">{group}</p>
+              <ul className="divide-y divide-rule">
+                {preferences.filter((p) => p.group === group).map((pref) => {
+                  const level = prefs[pref.key] ?? pref.default;
+                  return (
+                    <li key={pref.key} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                      <span className="min-w-0 max-w-prose">
+                        <span className="block font-medium">{pref.title}</span>
+                        <span className="block text-small text-pencil">{pref.about}</span>
+                        {pref.key === "light_day" && level > 0 && (
+                          <label className="mt-2 flex items-center gap-2 text-small">
+                            Какой день:
+                            <select className="rounded border border-rule bg-sheet px-2 py-1"
+                                    value={prefs.light_day_of_week ?? 5}
+                                    onChange={(e) => setPref("light_day_of_week", Number(e.target.value))}>
+                              {["Понедельник", "Вторник", "Среда", "Четверг", "Пятница"].map((name, n) => (
+                                <option key={name} value={n + 1}>{name}</option>
+                              ))}
+                            </select>
+                          </label>
+                        )}
+                      </span>
+                      <span className="inline-flex shrink-0 rounded border border-rule bg-sheet p-0.5" role="group"
+                            aria-label={pref.title}>
+                        {LEVELS.map(([value, label]) => (
+                          <button key={value} type="button" aria-pressed={level === value}
+                                  onClick={() => setPref(pref.key, value)}
+                                  className={cx("rounded-[4px] px-3 py-1 text-small font-medium transition-colors duration-150",
+                                                level === value ? "bg-pen text-white" : "text-ink hover:bg-paper")}>
+                            {label}
+                          </button>
+                        ))}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
+        </details>
       )}
 
       {!running && rules.length > 0 && !empty && (
@@ -239,6 +315,7 @@ export function SchoolPage() {
 }
 
 const STRICTNESS: [string, string][] = [["hard", "Жёстко"], ["soft", "Мягко"], ["off", "Не учитывать"]];
+const LEVELS: [number, string][] = [[0, "Не важно"], [1, "Немного"], [2, "Важно"], [3, "Очень"]];
 
 // «1 урок», «3 урока», «72 урока», «5 уроков».
 const plural = (n: number, one: string, few: string, many: string) => {

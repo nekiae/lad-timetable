@@ -26,7 +26,7 @@ from .jobs import JOBS, start_job
 from lad import explain, substitute  # noqa: E402
 from lad.excel import to_bytes as excel_bytes  # noqa: E402
 from lad.model import Slot  # noqa: E402
-from lad.solve import PRESETS, RULE_SOURCES, RULE_TITLES, Rules, assign_rooms  # noqa: E402
+from lad.solve import PREFERENCES, PRESETS, RULE_SOURCES, RULE_TITLES, Rules, assign_rooms  # noqa: E402
 from lad.storage import lessons_from_dict, lessons_to_dict  # noqa: E402
 from lad.tables import build_school, check_norms, tables_from_dict  # noqa: E402
 from lad.validate import check  # noqa: E402
@@ -188,6 +188,7 @@ def rules() -> dict:
         "rules": [{"key": key, "title": title, "source": RULE_SOURCES.get(key),
                    "default": getattr(defaults, key)} for key, title in RULE_TITLES.items()],
         "presets": [{"name": name, "about": value["about"]} for name, value in PRESETS.items()],
+        "preferences": [{k: p[k] for k in ("key", "group", "title", "about", "default")} for p in PREFERENCES],
     }
 
 
@@ -195,6 +196,7 @@ class SolveRequest(BaseModel):
     budget: float = 300
     preset: str = "Поровну"
     rules: dict[str, str] = {}
+    prefs: dict[str, int] = {}  # предпочтения школы: уровень 0–3 и light_day_of_week
     pinned: list[dict] | None = None
 
 

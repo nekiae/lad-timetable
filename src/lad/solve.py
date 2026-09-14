@@ -25,7 +25,7 @@ from collections import defaultdict
 import os
 import time
 from pathlib import Path
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ortools.sat.python import cp_model
 
@@ -50,6 +50,16 @@ class Weights:
     pe_rule: int = 8  # п. 94 ССЭТ: физкультура, если правило переведено в мягкие
     hard_subject_edge: int = 5  # п. 94 ССЭТ: трудный предмет на краю дня
 
+    # Предпочтения школы сверх норм (экран «Составление» → «Предпочтения школы»).
+    # None — взять из TUNING: так их крутит стенд замеров (bench/solver.py --tune).
+    subject_spacing: int | None = None  # предмет на 2–3 ч не в соседние дни
+    single_lesson_day: int | None = None  # учитель не едет в школу ради одного урока
+    light_day: int = 0  # короткий день недели у классов (0 — не нужен)
+    light_day_of_week: int = 5  # какой день короткий: 1 — понедельник … 5 — пятница
+    late_hard: int = 0  # трудные предметы не с 6-го урока
+    avoid_doubles: int = 0  # поменьше сдвоенных уроков, даже где норма их разрешает
+    pe_first_period: int = 0  # физкультура не первым уроком
+
 
 # Готовые наборы весов. Завучу не нужно знать слово «штраф»: ему нужно решить,
 # чьё удобство важнее, когда всем сразу угодить нельзя. Числа — уже наше дело.
@@ -72,6 +82,75 @@ PRESETS = {
                  "Расплата: у учителей появятся окна и лишние выходы в школу.",
     },
 }
+
+
+# ПРЕДПОЧТЕНИЯ ШКОЛЫ — ползунки на экране «Составление».
+#
+# Завуч не выставляет «вес 6»: он говорит, что важнее, когда всё сразу не выходит.
+# Уровень умножает вес выбранного режима («Поровну», «Учителям удобнее»…):
+# «Важно» — ровно вес режима, поэтому пока школа ничего не трогала, солвер
+# ведёт себя как измерено. Для предпочтений, которых в режиме нет (короткий
+# день и т. п.), «Важно» — это `reference`. Нормы всё равно закрываются первыми:
+# предпочтения работают только на этапе удобства (см. solve()).
+PREFERENCE_LEVELS = {0: 0.0, 1: 0.5, 2: 1.0, 3: 2.0}  # не важно / немного / важно / очень
+
+PREFERENCES = [
+    {"key": "teacher_gap", "group": "Учителям", "reference": 10, "default": 2,
+     "title": "Меньше окон у учителей",
+     "about": "Свободный урок посреди дня — час в школе без дела."},
+    {"key": "teacher_day", "group": "Учителям", "reference": 3, "default": 2,
+     "title": "Меньше выходов в школу",
+     "about": "Уроки учителя собираются в меньшее число дней."},
+    {"key": "single_lesson_day", "group": "Учителям", "reference": 5, "default": 2,
+     "title": "Не приезжать ради одного урока",
+     "about": "День, где у учителя единственный урок."},
+    {"key": "teacher_wish", "group": "Учителям", "reference": 6, "default": 2,
+     "title": "Учитывать «нежелательно» из пожеланий",
+     "about": "«Не может» соблюдается всегда; здесь — насколько беречь «нежелательно»."},
+    {"key": "class_imbalance", "group": "Классам", "reference": 2, "default": 2,
+     "title": "Ровное число уроков по дням",
+     "about": "Чтобы не было дня на 8 уроков рядом с днём на 5."},
+    {"key": "light_day", "group": "Классам", "reference": 6, "default": 0,
+     "title": "Короткий день недели",
+     "about": "В выбранный день у классов на урок меньше обычного."},
+    {"key": "subject_spacing", "group": "Классам", "reference": 6, "default": 2,
+     "title": "Предмет не в соседние дни",
+     "about": "Предмет на 2–3 часа в неделю — через день: успеть сделать домашнее."},
+    {"key": "late_hard", "group": "Классам", "reference": 3, "default": 0,
+     "title": "Трудные предметы — не в конце дня",
+     "about": "Математика, языки, физика, химия — не с 6-го урока."},
+    {"key": "avoid_doubles", "group": "Классам", "reference": 4, "default": 0,
+     "title": "Поменьше сдвоенных уроков",
+     "about": "Даже там, где норма их разрешает (повышенный уровень, труд)."},
+    {"key": "pe_first_period", "group": "Классам", "reference": 4, "default": 0,
+     "title": "Физкультура не первым уроком",
+     "about": "Норма и так ограничивает край дня; здесь — стараться не ставить первым вовсе."},
+    {"key": "peak_day", "group": "Трудность недели", "reference": 3, "default": 2,
+     "title": "Пик трудности во вторник, среду или пятницу",
+     "about": "Рекомендация п. 94 ССЭТ: понедельник не должен быть самым тяжёлым."},
+    {"key": "difficulty_imbalance", "group": "Трудность недели", "reference": 4, "default": 2,
+     "title": "Трудность ровно по дням",
+     "about": "Рекомендация п. 88.2 СанПиН: баллы трудности распределены по неделе."},
+]
+
+
+def weights_from_prefs(base: "Weights", prefs: dict | None) -> "Weights":
+    """Уровни предпочтений школы → веса штрафов поверх выбранного режима."""
+    if not prefs:
+        return base
+    values: dict = {}
+    for pref in PREFERENCES:
+        level = prefs.get(pref["key"])
+        if level is None:
+            continue
+        current = getattr(base, pref["key"])
+        if current is None:  # берётся из TUNING — там и лежит «важно»
+            current = TUNING.get(pref["key"])
+        reference = current or pref["reference"]
+        values[pref["key"]] = int(round(reference * PREFERENCE_LEVELS.get(int(level), 1.0)))
+    if prefs.get("light_day_of_week"):
+        values["light_day_of_week"] = int(prefs["light_day_of_week"])
+    return replace(base, **values)
 
 
 @dataclass
@@ -665,6 +744,8 @@ def _solve(
 
     # ================== SOFT: то, что штрафуется, а не запрещается ==================
     w = weights or Weights()
+    spacing_weight = int(w.subject_spacing if w.subject_spacing is not None else TUNING["subject_spacing"])
+    single_weight = int(w.single_lesson_day if w.single_lesson_day is not None else TUNING["single_lesson_day"])
     days = sorted({s.day for s in slots})
     penalties = []  # (переменная, вес)
     relaxed: list[str] = []  # нормы, ослабленные точечно — по классу, а не по школе
@@ -729,10 +810,10 @@ def _solve(
             # Выход в школу ради одного урока. single ≥ 2·works − уроков:
             # 0 уроков → 0, 1 урок → 1, два и больше → не больше нуля. Ограничено
             # только снизу — штраф сам опустит переменную, где урок не один.
-            if TUNING["single_lesson_day"]:
+            if single_weight:
                 single = model.NewBoolVar(f"single_{teacher_id}_{day}")
                 model.Add(single >= 2 * works - sum(t_busy.values()))
-                penalties.append((single, int(TUNING["single_lesson_day"])))
+                penalties.append((single, single_weight))
                 trackers["Дней ради одного урока"].append(single)
 
     # --- SOFT-5 + коридор дня: равномерная нагрузка класса по дням.
@@ -760,6 +841,15 @@ def _solve(
         low = total // day_count if day_count else 0
         high = -(-total // day_count) if day_count else 0
         high = min(high, school.periods_per_day)
+
+        # Короткий день недели (предпочтение школы): в выбранный день — на урок
+        # меньше обычного. Цель достижима: нижняя граница коридора дня тоже low − 1.
+        if w.light_day and w.light_day_of_week in days and total:
+            target = max(1, low - 1)
+            extra = model.NewIntVar(0, school.periods_per_day, f"light_{class_id}")
+            model.Add(extra >= per_day[days.index(w.light_day_of_week)] - target)
+            penalties.append((extra, w.light_day))
+            trackers["Короткий день: лишних уроков"].append(extra)
 
         if total and rules.on("even_days") and low <= high:
             # Жёсткая граница шире идеала на урок в каждую сторону, а к идеалу
@@ -809,7 +899,7 @@ def _solve(
     # во вторник — к завтрашнему уроку не подготовить домашнее. Предметам на
     # 4–5 часов соседние дни неизбежны, их не трогаем. Подгруппа «2» идёт
     # синхронно с «1», поэтому штраф берётся один раз — по первой.
-    if TUNING["subject_spacing"]:
+    if spacing_weight:
         for i, item in enumerate(school.load):
             group = school.group(item.group_id)
             if item.hours_per_week not in (2, 3) or group.part not in (None, "1"):
@@ -824,8 +914,36 @@ def _solve(
                     continue
                 adjacent = model.NewBoolVar(f"adj_{i}_{day}")
                 model.Add(adjacent >= on_day[day] + on_day[nxt] - 1)
-                penalties.append((adjacent, int(TUNING["subject_spacing"])))
+                penalties.append((adjacent, spacing_weight))
                 trackers["Предмет в соседние дни"].append(adjacent)
+
+    # --- Предпочтения школы сверх норм: трудные не в конце дня, физкультура
+    # не первым уроком, поменьше сдвоенных. Все три — только штрафы, по умолчанию 0.
+    if w.late_hard or w.pe_first_period or w.avoid_doubles:
+        always_pair = {s.id: s.always_double for s in school.subjects}
+        for i, item in enumerate(school.load):
+            group = school.group(item.group_id)
+            if group.part not in (None, "1"):
+                continue  # подгруппа «2» стоит синхронно с «1» — штраф один раз
+            name = subject_names.get(item.subject_id, "")
+            parallel = max((parallels.get(c, 0) for c in group.class_ids), default=0)
+            if w.late_hard and school.norms.is_hard_subject(name) and parallel in school.norms.hard_parallels:
+                for slot in slots:
+                    if slot.period >= 6:
+                        penalties.append((x[i, slot], w.late_hard))
+                        trackers["Трудные предметы с 6-го урока"].append(x[i, slot])
+            if w.pe_first_period and school.norms.is_pe(name):
+                for slot in slots:
+                    if slot.period == 1:
+                        penalties.append((x[i, slot], w.pe_first_period))
+                        trackers["Физкультура первым уроком"].append(x[i, slot])
+            if (w.avoid_doubles and not always_pair.get(item.subject_id)
+                    and school.norms.double_allowed(name, parallel, item.level != Level.BASE)):
+                for day in days:
+                    pair = model.NewIntVar(0, 1, f"dbl_{i}_{day}")
+                    model.Add(pair >= sum(x[i, slot] for slot in slots if slot.day == day) - 1)
+                    penalties.append((pair, w.avoid_doubles))
+                    trackers["Сдвоенных уроков"].append(pair)
 
     # --- Пожелания учителей: «нежелательно», а не «не могу».
     # Отличие от HARD-6 принципиальное. Если все пожелания сделать запретами,
