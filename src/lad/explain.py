@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass, field, replace
 
-from .model import Lesson, School, Slot
+from .model import Lesson, Level, School, Slot
 from .validate import Report, check
 
 DAY_NAMES = {1: "понедельник", 2: "вторник", 3: "среда", 4: "четверг", 5: "пятница",
@@ -137,14 +137,27 @@ def evaluate_move(school: School, lessons: list[Lesson], index: int, target: Slo
         verdict.gains.append(Reason("Уходит нарушение: " + _human(what, where),
                                     rule if rule.startswith("п.") else None))
 
-    # один предмет дважды в день у группы — солвер этого не допускает,
-    # кроме сдвоенных уроков, поэтому и здесь это ухудшение, а не запрет
-    same_day = sum(1 for i, other in enumerate(after_lessons)
+    # Один предмет дважды в день у группы. Солвер ставит так только сдвоенный
+    # урок, и только там, где его разрешает п. 65 ССЭТ (повышенный уровень
+    # в VIII–XI, трудовое обучение). Ручная правка обязана следовать тем же
+    # правилам, иначе завуч руками соберёт то, что система сама бы запретила:
+    # найдено 14.09.2026 — вторая физкультура в тот же день предлагалась
+    # как «можно, но хуже», хотя физкультуру сдваивать нельзя вовсе.
+    same_day = sum(1 for other in after_lessons
                    if other.group_id == lesson.group_id and other.subject_id == lesson.subject_id
                    and other.slot.day == target.day)
     if same_day > 1 and lesson.slot.day != target.day:
-        verdict.costs.append(Reason(
-            f"«{subjects.get(lesson.subject_id, '')}» в этот день у класса уже есть"))
+        name = subjects.get(lesson.subject_id, "")
+        group = school.group(lesson.group_id)
+        parallel = max((c.parallel for c in school.classes if c.id in group.class_ids), default=0)
+        advanced = any(item.level != Level.BASE for item in school.load
+                       if item.group_id == lesson.group_id and item.subject_id == lesson.subject_id)
+        if school.norms.double_allowed(name, parallel, advanced):
+            verdict.costs.append(Reason(f"«{name}» в этот день уже есть — выйдет сдвоенный урок"))
+        else:
+            verdict.blocking.append(Reason(
+                f"«{name}» в этот день у класса уже есть, а сдваивать этот предмет нельзя",
+                "п. 65 ССЭТ"))
 
     delta_gaps = after.teacher_gaps - before.teacher_gaps
     if delta_gaps > 0:
