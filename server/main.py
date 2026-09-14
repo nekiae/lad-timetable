@@ -198,6 +198,8 @@ class SolveRequest(BaseModel):
     rules: dict[str, str] = {}
     prefs: dict[str, int] = {}  # предпочтения школы: уровень 0–3 и light_day_of_week
     pinned: list[dict] | None = None
+    hint: list[dict] | None = None  # текущая сетка — старт пересборки вокруг закреплённых
+    keep: bool = False  # беречь текущую сетку: штраф за каждый урок, ушедший со своего места
 
 
 @app.post("/api/schools/{school_id}/solve")

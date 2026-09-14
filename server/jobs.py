@@ -48,6 +48,8 @@ def _worker(doc: dict, options: dict, events, stop_flag) -> None:
         known = set(Rules.__dataclass_fields__)
         rules = Rules(**{k: v for k, v in (options.get("rules") or {}).items() if k in known})
         pinned = lessons_from_dict(options["pinned"]) if options.get("pinned") else None
+        hint = lessons_from_dict(options["hint"]) if options.get("hint") else None
+        stay = hint if options.get("keep") else None  # пересборка: двигать нужное, а не всё
 
         # Справочник для живой сетки в браузере: что за урок стоит за строкой
         # нагрузки i из снимков хода поиска. Отдаётся один раз до начала.
@@ -71,7 +73,7 @@ def _worker(doc: dict, options: dict, events, stop_flag) -> None:
                         "wall": time.monotonic() - started})
 
         result = solve(school, max_seconds=float(options.get("budget") or 300),
-                       weights=weights, rules=rules, pinned=pinned,
+                       weights=weights, rules=rules, pinned=pinned, hint=hint, stay=stay,
                        on_progress=on_progress, should_stop=stop_flag.is_set)
         lessons = assign_rooms(school, result.lessons) if result.ok else []
         events.put({

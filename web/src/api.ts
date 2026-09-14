@@ -209,10 +209,12 @@ export const api = {
       preferences: { key: string; group: string; title: string; about: string; default: number }[];
     }>("GET", "/rules"),
   solve: (id: string, body: { budget: number; preset: string; rules?: Record<string, string>;
-                               prefs?: Record<string, number>; pinned?: LessonDTO[] }) =>
+                               prefs?: Record<string, number>; pinned?: LessonDTO[]; hint?: LessonDTO[];
+                               keep?: boolean }) =>
     call<{ job_id: string }>("POST", `/schools/${id}/solve`, body),
   stop: (jobId: string) => call<{ ok: boolean }>("POST", `/jobs/${jobId}/stop`),
   latest: (id: string) => call<Schedule>("GET", `/schools/${id}/schedules/latest`),
+  schedule: (id: string, scheduleId: string) => call<Schedule>("GET", `/schools/${id}/schedules/${scheduleId}`),
   validate: (id: string, lessons: LessonDTO[]) =>
     call<Report>("POST", `/schools/${id}/validate`, { lessons }),
   heatmap: (id: string, lessons: LessonDTO[], index: number) =>

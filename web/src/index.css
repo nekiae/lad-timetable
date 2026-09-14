@@ -21,6 +21,22 @@
   .font-narrow {
     font-stretch: 85%;
   }
+  /* Клетка, куда пересборка переставила урок: короткая вспышка синим, которая
+     гаснет. Показывает, что изменилось, и не остаётся на экране шумом. */
+  .cell-flash {
+    animation: lad-cell-flash 2.4s ease-out;
+  }
+}
+
+@keyframes lad-cell-flash {
+  0%, 35% {
+    background-color: theme("colors.pen.soft");
+    box-shadow: inset 0 0 0 2px theme("colors.pen.DEFAULT");
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: inset 0 0 0 2px transparent;
+  }
 }
 
 /* Печать: лист A4, белая бумага вместо фона приложения. */

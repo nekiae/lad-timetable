@@ -235,6 +235,12 @@ TUNING: dict = {
     "balance_x": 1.0,
     # Множитель веса «пик трудности не во вторник/среду/пятницу».
     "peak_x": 1.0,
+    # Пересборка вокруг закреплённых (экран расписания): штраф за каждый урок,
+    # ушедший со своего места. Без него пересборка ради удобства перетасовывала
+    # почти всё: замер 15.09.2026 — переставлено 746 уроков из 838 ради одного
+    # закреплённого. Вес сопоставим с окном учителя (10): урок двигается, только
+    # если это реально что-то даёт.
+    "stay_weight": 6,
 }
 
 
@@ -447,6 +453,8 @@ def _solve(
     norms_only: bool = False,
     norm_cap: int | None = None,
     phase: str = "polish",
+    stay: list[Lesson] | None = None,
+    stay_weight: int = 0,
     hint: list[Lesson] | None = None,
 ) -> SolveResult:
     """Составить расписание.
@@ -512,6 +520,22 @@ def _solve(
                 hinted.add((i, lesson.slot))
         for key, var in x.items():
             model.AddHint(var, 1 if key in hinted else 0)
+
+    # --- «оставить на месте»: урок, ушедший из своей клетки, — штраф stay_weight
+    # (см. TUNING["stay_weight"]). moved ≥ 1 − x: ограничено только снизу,
+    # штраф сам опустит переменную, где урок остался.
+    moved_vars: list = []
+    if stay and stay_weight:
+        stay_rows: dict[tuple[str, str, str], list[int]] = defaultdict(list)
+        for i, item in enumerate(school.load):
+            stay_rows[item.group_id, item.subject_id, item.teacher_id].append(i)
+        for n, lesson in enumerate(stay):
+            rows_of = stay_rows.get((lesson.group_id, lesson.subject_id, lesson.teacher_id))
+            if not rows_of or lesson.slot not in x_slots:
+                continue
+            moved = model.NewBoolVar(f"moved_{n}")
+            model.Add(moved >= 1 - x[rows_of[0], lesson.slot])
+            moved_vars.append(moved)
 
     # --- HARD-4b: один и тот же предмет не стоит у группы дважды в один день
     # (иначе солвер честно поставит 5 математик подряд в понедельник).
@@ -748,6 +772,9 @@ def _solve(
     single_weight = int(w.single_lesson_day if w.single_lesson_day is not None else TUNING["single_lesson_day"])
     days = sorted({s.day for s in slots})
     penalties = []  # (переменная, вес)
+    for moved in moved_vars:
+        penalties.append((moved, stay_weight))
+        trackers["Переставлено уроков"].append(moved)
     relaxed: list[str] = []  # нормы, ослабленные точечно — по классу, а не по школе
 
     # --- SOFT-1 и SOFT-3: окна у учителей и число дней присутствия.
@@ -1296,6 +1323,10 @@ def _solve(
         if norms_only and trackers.get("Нарушений норм"):
             # Черновик: единственная цель — ноль нарушений норм (см. solve()).
             objective = sum(trackers["Нарушений норм"])
+            if moved_vars:
+                # При пересборке черновик ещё и бережёт сетку: сначала нормы,
+                # из законных — та, где меньше уроков ушло со своих мест.
+                objective = NORM_PRIORITY_WEIGHT * objective + sum(moved_vars)
         else:
             objective = sum(var * weight for var, weight in penalties)
         reporter = _Reporter(dict(trackers), max_seconds, on_progress, should_stop, started_at,
@@ -1451,8 +1482,18 @@ def solve(
     params: dict | None = None,
     hierarchical: bool = False,
     ignore_rooms: bool = False,
+    hint: list[Lesson] | None = None,
+    stay: list[Lesson] | None = None,
 ) -> SolveResult:
     """Составить расписание. Всегда отдаёт сетку, если она в принципе существует.
+
+    `hint` — готовая сетка, от которой начать (пересборка вокруг закреплённых
+    уроков на экране расписания): черновик стартует не с пустого места, и
+    законная сетка находится почти сразу. Это подсказка, а не ограничение.
+
+    `stay` — сетка, которую надо сберечь: каждый урок, ушедший со своего места,
+    штрафуется (TUNING["stay_weight"]). Так пересборка вокруг закреплённых
+    двигает нужное, а не перетасовывает всё ради удобства.
 
     ПОЧЕМУ ДВА ШАГА. Замерено 14.09.2026 на школе завуча (24 класса, 838 часов):
       • нормы запретами — первое расписание за 185 с, 86 с, а в одном прогоне
@@ -1490,9 +1531,12 @@ def solve(
     # ноль нарушений (цель — сумма нарушений, ноль — нижняя граница), поэтому
     # лишнего не съест. Половины не хватало: замерено 14.09.2026, один сид из трёх
     # доходил до нуля только на 106-й секунде, а обёртка обрывала его на 60-й.
-    draft = _solve(school, max_seconds=max_seconds * float(TUNING["draft_share"]), optimize=True,
+    # С `stay` черновик не останавливается на нуле сам (он ещё бережёт сетку),
+    # поэтому доля его бюджета меньше — доводке нужно время уложить уроки назад.
+    share = 0.6 if stay else float(TUNING["draft_share"])
+    draft = _solve(school, max_seconds=max_seconds * share, optimize=True,
                    soft_norms=True, norms_only=not TUNING["draft_comfort"], on_progress=on_progress,
-                   phase="draft", **common)
+                   phase="draft", hint=hint, stay=stay, stay_weight=1 if stay else 0, **common)
     if not draft.ok:
         return draft
 
@@ -1504,25 +1548,8 @@ def solve(
         cap = draft.penalty if not TUNING["draft_comfort"] else _norm_violations(school, draft.lessons)
         final = _solve(school, max_seconds=left(), optimize=True, soft_norms=True,
                        norm_cap=cap, hint=draft.lessons, on_progress=on_progress,
-                       hierarchical=hierarchical, **common)
-        if final.ok:
-            final.wall_time = time.monotonic() - started
-            return final
-
-    draft.wall_time = time.monotonic() - started
-    draft.penalty = None  # штраф черновика считает только нормы, с итоговым несравним
-    return draft
-
-    stopped = bool(should_stop and should_stop())
-    if draft.penalty == 0 and not stopped and left() > 5:
-        final = _solve(school, max_seconds=left(), optimize=True, hint=draft.lessons,
-                       on_progress=on_progress, hierarchical=hierarchical, **common)
-        if final.ok:
-            final.wall_time = time.monotonic() - started
-            return final
-    elif draft.penalty != 0 and not stopped and left() > 5:
-        final = _solve(school, max_seconds=left(), optimize=True, soft_norms=True,
-                       hint=draft.lessons, on_progress=on_progress, **common)
+                       hierarchical=hierarchical, stay=stay,
+                       stay_weight=int(TUNING["stay_weight"]) if stay else 0, **common)
         if final.ok:
             final.wall_time = time.monotonic() - started
             return final

@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
-import { api, type Directory, type LessonDTO, type Report, type Schedule, type Verdict } from "../api";
+import { api, type Directory, type LessonDTO, type Progress, type Report, type Schedule, type Verdict } from "../api";
 import { Button, ButtonLink, EmptyState, Notice, Panel, Reasons, cx } from "../ui";
 
 // Короткие названия для клетки сетки: полное «Физическая культура и здоровье»
@@ -89,9 +89,25 @@ export function SchedulePage() {
   const [preview, setPreview] = useState<{ key: string; verdict: Verdict } | null>(null);
   // Итог последней попытки хода: применён он или отклонён. Отказ в красную
   // клетку тоже показывается, но заголовком «Сюда нельзя», а не «поменялись».
-  const [last, setLast] = useState<{ verdict: Verdict; applied: boolean } | null>(null);
+  const [last, setLast] = useState<{ verdict: Verdict; applied: boolean;
+                                     target?: { index: number; day: number; period: number } } | null>(null);
   const [hideNames, setHideNames] = useState(false);
   const [saved, setSaved] = useState<"idle" | "saving" | "saved">("idle");
+  // Закреплённые уроки — ПОЗИЦИИ (урок + клетка), а не номера в массиве:
+  // номера меняются после каждой пересборки, а закрепление должно пережить её.
+  const [pins, setPins] = useState<LessonDTO[]>([]);
+  const [settings, setSettings] = useState<Record<string, unknown>>({});
+  const [rebuild, setRebuild] = useState<{ job: string; started: number; pinsCount: number;
+                                           progress?: Progress; stopped?: boolean } | null>(null);
+  const [rebuildResult, setRebuildResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [flash, setFlash] = useState<Set<string>>(new Set());
+  const [now, setNow] = useState(0);
+  // Сетка «до» и где стояли её уроки на экране — чтобы после пересборки
+  // перенести переставленные уроки анимацией из старых клеток в новые.
+  const pendingAnimation = useRef<{ before: LessonDTO[]; rects: Map<string, DOMRect> } | null>(null);
+  // Остановил ли пересборку человек — в ref, а не в состоянии: читается в конце
+  // задачи, и отложенное обновление состояния React могло бы не успеть.
+  const stoppedByUser = useRef(false);
 
   useEffect(() => {
     api.latest(id)
@@ -101,7 +117,21 @@ export function SchedulePage() {
         setReport(s.report);
       })
       .catch(() => setSchedule(null));
+    api.school(id).then((s) => setSettings(s.doc.settings)).catch(() => undefined);
   }, [id]);
+
+  useEffect(() => {
+    if (!rebuild) return;
+    const timer = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(timer);
+  }, [rebuild]);
+
+  useLayoutEffect(() => {
+    const pending = pendingAnimation.current;
+    if (!pending || !schedule) return;
+    pendingAnimation.current = null;
+    animateMoves(pending.before, lessons, pending.rects, schedule.directory, setFlash);
+  }, [lessons, schedule]);
 
   const dir = schedule?.directory;
   const grid = useMemo(() => (dir ? buildGrid(dir, lessons) : new Map<string, number[]>()), [dir, lessons]);
@@ -137,7 +167,7 @@ export function SchedulePage() {
     if (selected === null || !heat) return;
     const verdict = heat[`${day}-${period}`];
     if (!verdict || verdict.level === "no") {
-      setLast(verdict ? { verdict, applied: false } : null);
+      setLast(verdict ? { verdict, applied: false, target: { index: selected, day, period } } : null);
       return;
     }
     const result = await api.move(id, lessons, selected, day, period);
@@ -170,7 +200,101 @@ export function SchedulePage() {
     setSaved("saved");
   }
 
-  const shown = preview ? { verdict: preview.verdict, applied: false } : last;
+  const samePlace = (a: LessonDTO, b: LessonDTO) =>
+    lessonKey(a) === lessonKey(b) && a.day === b.day && a.period === b.period;
+  const isPinned = (l: LessonDTO) => pins.some((p) => samePlace(p, l));
+
+  // Подгруппы одного деления закрепляются и переезжают вместе: они обязаны
+  // стоять в одном часе (HARD-9), по отдельности их не поставить.
+  function partners(index: number): number[] {
+    const l = lessons[index];
+    const group = dir!.groups[l.group_id];
+    if (!group?.part) return [index];
+    return lessons.flatMap((x, i) =>
+      x.day === l.day && x.period === l.period && x.subject_id === l.subject_id
+        && dir!.groups[x.group_id]?.class_ids.join() === group.class_ids.join() ? [i] : []);
+  }
+
+  function togglePin(index: number) {
+    const group = partners(index).map((i) => lessons[i]);
+    setPins((current) => (isPinned(lessons[index])
+      ? current.filter((p) => !group.some((g) => samePlace(g, p)))
+      : [...current, ...group]));
+  }
+
+  // «Поставить сюда и пересобрать остальное»: урок закрепляется в выбранной
+  // клетке, прежнее закрепление этого урока снимается, остальное — солверу.
+  function placeAndRebuild(index: number, day: number, period: number) {
+    const moving = partners(index);
+    const kept = pins.filter((p) => !moving.some((i) => samePlace(lessons[i], p)));
+    const next = [...kept, ...moving.map((i) => ({ ...lessons[i], day, period, room_id: null }))];
+    setPins(next);
+    startRebuild(next);
+  }
+
+  async function startRebuild(nextPins: LessonDTO[]) {
+    setSelected(null);
+    setHeat(null);
+    setPreview(null);
+    setLast(null);
+    setRebuildResult(null);
+    const before = lessons;
+    const beforeReport = report;
+    const started = Date.now();
+    try {
+      const { job_id } = await api.solve(id, {
+        budget: REBUILD_SECONDS,
+        preset: typeof settings.preset === "string" ? settings.preset : "Поровну",
+        rules: (settings.rules as Record<string, string>) ?? {},
+        prefs: (settings.prefs as Record<string, number>) ?? {},
+        pinned: nextPins,
+        hint: lessons, // старт с текущей сетки — законная находится почти сразу
+        keep: true, // беречь сетку: двигать нужное, а не перетасовывать всё ради удобства
+      });
+      stoppedByUser.current = false;
+      setRebuild({ job: job_id, started, pinsCount: nextPins.length });
+      api.watch(job_id, (p) => setRebuild((r) => (r ? { ...r, progress: p } : r)), async (done) => {
+        const stopped = stoppedByUser.current;
+        setRebuild(null);
+        if (done.type !== "result" || !done.schedule_id) {
+          setRebuildResult({
+            ok: false,
+            text: done.type === "problems" ? `В данных школы ошибки: ${done.problems?.[0] ?? ""}`
+              : done.type === "error" ? "Пересборка остановилась с ошибкой."
+                : stopped ? "Остановлено раньше, чем нашлась законная сетка."
+                  : "Вокруг этих закреплённых уроков расписание не складывается: они противоречат нормам или друг другу. Открепите последний и попробуйте снова.",
+          });
+          return;
+        }
+        const fresh = await api.schedule(id, done.schedule_id);
+        pendingAnimation.current = { before, rects: captureRects(dir!, before) };
+        setHistory((h) => [...h, { lessons: before, report: beforeReport }]);
+        setSchedule(fresh);
+        setLessons(fresh.lessons);
+        setReport(fresh.report);
+        setSaved("saved");
+        const moved = diffMoves(before, fresh.lessons).length;
+        const gaps = beforeReport && fresh.report
+          ? ` Окна у учителей: ${beforeReport.teacher_gaps} → ${fresh.report.teacher_gaps}.` : "";
+        const norms = fresh.report
+          ? (fresh.report.norm_violations ? ` Нарушений норм: ${fresh.report.norm_violations}.` : " Нормы соблюдены.") : "";
+        setRebuildResult({
+          ok: true,
+          text: `Пересобрано за ${Math.round((Date.now() - started) / 1000)} с. Переставлено уроков: ${moved}.${gaps}${norms}`,
+        });
+      });
+    } catch (e) {
+      setRebuildResult({ ok: false, text: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  // Карточка справа: под курсором — превью наведённой клетки, но если курсор
+  // стоит над той самой клеткой, куда только что щёлкнули и получили отказ, —
+  // карточка отказа с кнопкой «Поставить сюда и пересобрать». Иначе превью
+  // перекрывало её, и кнопка пропадала ровно тогда, когда нужна (найдено
+  // сквозным прогоном 15.09.2026: после щелчка курсор остаётся на клетке).
+  const lastKey = last?.target ? `${last.target.day}-${last.target.period}` : null;
+  const shown = preview && preview.key !== lastKey ? { verdict: preview.verdict, applied: false } : last;
   const dayBorder = (period: number) => (period === 1 ? "border-t-2 border-t-ink/20" : "border-t border-t-rule");
 
   return (
@@ -233,7 +357,8 @@ export function SchedulePage() {
       )}
 
       <div className="mt-5 flex gap-6 max-lg:flex-col">
-        <div className="min-w-0 flex-1 overflow-auto rounded-lg border border-rule bg-sheet"
+        <div className={cx("min-w-0 flex-1 overflow-auto rounded-lg border border-rule bg-sheet transition-opacity duration-300",
+                           rebuild && "pointer-events-none opacity-60")}
              style={{ maxHeight: "calc(100vh - 180px)" }}>
           <table className="border-separate border-spacing-0 font-narrow text-cell">
             <thead>
@@ -267,7 +392,7 @@ export function SchedulePage() {
                         const target = selectedClasses.has(c.id) && verdict;
                         const isSource = selected !== null && cell.includes(selected);
                         return (
-                          <td key={c.id}
+                          <td key={c.id} data-cell={cellKey(c.id, day.n, period)}
                               onMouseEnter={() => target && setPreview({ key, verdict })}
                               onMouseLeave={() => target && setPreview(null)}
                               onClick={() => {
@@ -278,6 +403,7 @@ export function SchedulePage() {
                                 "h-11 cursor-pointer border-r border-rule px-1.5 align-top",
                                 dayBorder(period),
                                 isSource && "outline outline-2 -outline-offset-2 outline-pen",
+                                flash.has(cellKey(c.id, day.n, period)) && "cell-flash",
                                 target ? TINT[verdict.level] : "hover:bg-paper")}>
                             {bySubject(cell, lessons).map((same) => {
                               const l = lessons[same[0]];
@@ -292,7 +418,8 @@ export function SchedulePage() {
                                 return `${subject}${p ? `, ${p} гр.` : ""}\n${dir.teachers[x.teacher_id] ?? ""}${x.room_id ? `\nкаб. ${x.room_id}` : ""}`;
                               }).join("\n\n");
                               return (
-                                <div key={same[0]} className="py-0.5" title={title}>
+                                <div key={same[0]} title={isPinned(l) ? `${title}\n\nЗакреплён` : title}
+                                     className={cx("py-0.5", isPinned(l) && "-ml-1.5 border-l-[3px] border-pen pl-1")}>
                                   <div className="font-medium">{short(subject)}{part ? ` (${part})` : ""}</div>
                                   <div className="text-pencil">{same.map((i) => teacherName(lessons[i].teacher_id)).join(" / ")}</div>
                                 </div>
@@ -311,13 +438,66 @@ export function SchedulePage() {
 
         {/* Поля: здесь объяснения, как замечания учителя на полях тетради. */}
         <aside className="w-full shrink-0 space-y-4 lg:w-80" aria-live="polite">
-          {selected === null && !shown && (
+          {rebuild && (
+            <RebuildProgress rebuild={rebuild} now={now}
+                             onStop={() => {
+                               stoppedByUser.current = true;
+                               setRebuild((r) => (r ? { ...r, stopped: true } : r));
+                               api.stop(rebuild.job);
+                             }} />
+          )}
+          {rebuildResult && !rebuild && (
+            <Notice tone={rebuildResult.ok ? "ok" : "no"} title={rebuildResult.ok ? "Пересобрано" : "Не получилось пересобрать"}>
+              {rebuildResult.text}
+            </Notice>
+          )}
+          {selected !== null && !rebuild && (
+            <Panel as="div" className="flex items-center justify-between gap-3 text-small">
+              <span className="min-w-0">
+                <span className="block font-medium">
+                  {dir.subjects[lessons[selected].subject_id]}, {dir.groups[lessons[selected].group_id]?.class_ids.join(", ")}
+                </span>
+                <span className="block text-pencil">
+                  {dir.days.find((d) => d.n === lessons[selected].day)?.name}, {lessons[selected].period}-й урок
+                </span>
+              </span>
+              <Button onClick={() => togglePin(selected)}>
+                {isPinned(lessons[selected]) ? "Открепить" : "Закрепить"}
+              </Button>
+            </Panel>
+          )}
+          {pins.length > 0 && !rebuild && (
+            <Panel as="div" className="text-small">
+              <p className="text-heading">Закреплено уроков: {pins.length}</p>
+              <p className="mt-1 text-pencil">Пересборка оставит их на местах и переставит остальное по нормам.</p>
+              <ul className="mt-2 max-h-40 space-y-1 overflow-auto">
+                {pins.map((p, n) => (
+                  <li key={`${lessonKey(p)}-${p.day}-${p.period}`} className="flex items-baseline justify-between gap-2">
+                    <span className="min-w-0 truncate">
+                      {dir.groups[p.group_id]?.class_ids.join(", ")} {short(dir.subjects[p.subject_id] ?? "")},{" "}
+                      {dir.days.find((d) => d.n === p.day)?.name.slice(0, 2)} {p.period}-й
+                    </span>
+                    <button type="button" className="shrink-0 text-pen underline-offset-4 hover:underline"
+                            onClick={() => setPins((all) => all.filter((_, i) => i !== n))}>
+                      открепить
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button variant="primary" onClick={() => startRebuild(pins)}>Пересобрать вокруг закреплённых</Button>
+                <Button onClick={() => setPins([])}>Открепить все</Button>
+              </div>
+            </Panel>
+          )}
+          {selected === null && !shown && !rebuild && pins.length === 0 && (
             <Panel as="div" className="text-small">
               <p className="text-heading">Как поправить руками</p>
               <p className="mt-2 text-ink/80">
                 Щёлкните урок. Клетки его класса подсветятся: зелёные — можно поставить,
                 жёлтые — можно, но станет хуже, красные — нельзя. Щелчок по клетке меняет
-                уроки местами.
+                уроки местами. Урок можно закрепить — и пересобрать всё остальное вокруг
+                закреплённых.
               </p>
             </Panel>
           )}
@@ -331,7 +511,12 @@ export function SchedulePage() {
                      onPick={(day, period) => place(day, period)}
                      onHover={(key) => setPreview(key ? { key, verdict: heat[key] } : null)} />
           )}
-          {shown && <VerdictCard verdict={shown.verdict} applied={shown.applied} />}
+          {shown && !rebuild && (
+            <VerdictCard verdict={shown.verdict} applied={shown.applied}
+                         onRebuild={"target" in shown && shown.target
+                           ? () => placeAndRebuild(shown.target!.index, shown.target!.day, shown.target!.period)
+                           : undefined} />
+          )}
           {report && report.violations.length > 0 && (
             <details className="rounded-lg border border-no/30 bg-sheet p-4 text-small">
               <summary className="cursor-pointer font-semibold text-no">
@@ -412,7 +597,7 @@ function Options({ heat, dir, lessons, current, onPick, onHover }: {
   );
 }
 
-function VerdictCard({ verdict, applied }: { verdict: Verdict; applied: boolean }) {
+function VerdictCard({ verdict, applied, onRebuild }: { verdict: Verdict; applied: boolean; onRebuild?: () => void }) {
   const title = applied
     ? "Уроки поменялись местами"
     : verdict.level === "no" ? "Сюда нельзя" : verdict.level === "worse" ? "Можно, но станет хуже" : "Можно";
@@ -427,6 +612,132 @@ function VerdictCard({ verdict, applied }: { verdict: Verdict; applied: boolean 
       {verdict.level === "ok" && !verdict.costs.length && !verdict.gains.length && !applied && (
         <p className="mt-1 text-pencil">Ничего не нарушится, метрики не изменятся.</p>
       )}
+      {/* Обменом нельзя — но можно поставить урок сюда силой, а остальное пусть
+          переставит солвер, так, чтобы нормы снова сошлись. */}
+      {onRebuild && (
+        <div className="mt-3 border-t border-rule pt-3">
+          <Button variant="primary" onClick={onRebuild}>Поставить сюда и пересобрать остальное</Button>
+          <p className="mt-1.5 text-pencil">Урок закрепится здесь, остальное система переставит по нормам.</p>
+        </div>
+      )}
     </div>
+  );
+}
+
+const REBUILD_SECONDS = 40;
+
+const lessonKey = (l: LessonDTO) => `${l.group_id}|${l.subject_id}|${l.teacher_id}`;
+const cellKey = (classId: string, day: number, period: number) => `${classId}|${day}|${period}`;
+
+// Какие уроки куда переехали. Уроки одной строки нагрузки взаимозаменяемы:
+// те, что остались в своих клетках, не считаются, оставшиеся «откуда» и «куда»
+// сопоставляются по порядку.
+function diffMoves(before: LessonDTO[], after: LessonDTO[]) {
+  const places = (list: LessonDTO[]) => {
+    const map = new Map<string, string[]>();
+    for (const l of list) map.set(lessonKey(l), [...(map.get(lessonKey(l)) ?? []), `${l.day}|${l.period}`]);
+    return map;
+  };
+  const was = places(before), now = places(after);
+  const moves: { key: string; from: string; to: string }[] = [];
+  for (const [key, olds] of was) {
+    const fresh = [...(now.get(key) ?? [])];
+    const left = olds.filter((place) => {
+      const at = fresh.indexOf(place);
+      if (at < 0) return true;
+      fresh.splice(at, 1);
+      return false;
+    });
+    left.forEach((from, i) => fresh[i] && moves.push({ key, from, to: fresh[i] }));
+  }
+  return moves;
+}
+
+function captureRects(dir: Directory, list: LessonDTO[]) {
+  const rects = new Map<string, DOMRect>();
+  for (const l of list) {
+    const classId = dir.groups[l.group_id]?.class_ids[0];
+    const cell = classId && document.querySelector(`[data-cell="${cellKey(classId, l.day, l.period)}"]`);
+    if (cell) rects.set(`${lessonKey(l)}|${l.day}|${l.period}`, cell.getBoundingClientRect());
+  }
+  return rects;
+}
+
+// Перелёт переставленных уроков из старых клеток в новые — синие плашки
+// с названием предмета, по очереди, затем вспышка клеток, куда они сели.
+// Движение отвечает на действие человека и показывает, что изменилось
+// (docs/DESIGN.md §5). При prefers-reduced-motion — только вспышка.
+function animateMoves(before: LessonDTO[], after: LessonDTO[], rects: Map<string, DOMRect>,
+                      dir: Directory, setFlash: (cells: Set<string>) => void) {
+  const moves = diffMoves(before, after);
+  if (!moves.length) return;
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const cells = new Set<string>();
+  moves.slice(0, 120).forEach((move, n) => {
+    const [groupId, subjectId] = move.key.split("|");
+    const classId = dir.groups[groupId]?.class_ids[0];
+    if (!classId) return;
+    const [day, period] = move.to.split("|").map(Number);
+    cells.add(cellKey(classId, day, period));
+    const from = rects.get(`${move.key}|${move.from}`);
+    const target = document.querySelector(`[data-cell="${cellKey(classId, day, period)}"]`);
+    if (reduce || !from || !target) return;
+    const to = target.getBoundingClientRect();
+    const ghost = document.createElement("div");
+    ghost.textContent = short(dir.subjects[subjectId] ?? subjectId);
+    ghost.className = "pointer-events-none fixed z-50 rounded bg-pen px-1.5 py-0.5 font-narrow text-cell font-medium text-white shadow-pop";
+    ghost.style.left = `${from.left + 4}px`;
+    ghost.style.top = `${from.top + 4}px`;
+    document.body.appendChild(ghost);
+    const dx = to.left - from.left, dy = to.top - from.top;
+    const flight = ghost.animate(
+      [
+        { transform: "translate(0, 0) scale(0.9)", opacity: 0 },
+        { transform: "translate(0, 0) scale(1)", opacity: 1, offset: 0.15 },
+        { transform: `translate(${dx}px, ${dy}px) scale(1)`, opacity: 1, offset: 0.8 },
+        { transform: `translate(${dx}px, ${dy}px) scale(0.9)`, opacity: 0 },
+      ],
+      { duration: 1000, delay: Math.min(n * 18, 1200), easing: "cubic-bezier(.2,.7,.2,1)", fill: "both" },
+    );
+    flight.onfinish = () => ghost.remove();
+  });
+  setFlash(cells);
+  window.setTimeout(() => setFlash(new Set()), 2600);
+}
+
+function RebuildProgress({ rebuild, now, onStop }: {
+  rebuild: { started: number; pinsCount: number; progress?: Progress; stopped?: boolean };
+  now: number;
+  onStop: () => void;
+}) {
+  const elapsed = Math.max(0, ((now || Date.now()) - rebuild.started) / 1000);
+  const p = rebuild.progress;
+  const found = p && Object.keys(p.metrics).length > 0;
+  return (
+    <Panel as="div" className="text-small">
+      <p className="text-heading">Пересобираю вокруг закреплённых: {rebuild.pinsCount}</p>
+      <div className="mt-3 h-1 overflow-hidden rounded-full bg-rule">
+        <div className="h-full bg-pen transition-[width] duration-500"
+             style={{ width: `${Math.min(100, (elapsed / REBUILD_SECONDS) * 100)}%` }} />
+      </div>
+      <p className="mt-2 text-pencil">
+        {Math.round(elapsed)} с из {REBUILD_SECONDS}.{" "}
+        {!found ? "Ищу законную сетку вокруг закреплённых…"
+          : p!.phase === "polish" ? "Нормы закрыты, улучшаю удобство." : "Закрываю нормы."}
+      </p>
+      {found && (
+        <dl className="mt-2 grid grid-cols-2 gap-2">
+          {["Нарушений норм", "Окна у учителей"].filter((k) => k in p!.metrics).map((k) => (
+            <div key={k}>
+              <dt className="text-pencil">{k}</dt>
+              <dd className="text-heading">{p!.metrics[k]}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      <Button className="mt-3" disabled={rebuild.stopped} onClick={onStop}>
+        {rebuild.stopped ? "Останавливаю…" : "Остановить и взять лучшее"}
+      </Button>
+    </Panel>
   );
 }

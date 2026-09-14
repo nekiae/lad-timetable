@@ -53,6 +53,7 @@ export function SchoolPage() {
       setDoc(s.doc);
       setStrict((s.doc.settings.rules as Record<string, string>) ?? {});
       setPrefs((s.doc.settings.prefs as Record<string, number>) ?? {});
+      if (typeof s.doc.settings.preset === "string") setPreset(s.doc.settings.preset);
     });
     return () => unwatch.current?.();
   }, [id]);
@@ -102,6 +103,15 @@ export function SchoolPage() {
     ...Object.fromEntries(preferences.map((p) => [p.key, prefs[p.key] ?? p.default])),
     light_day_of_week: prefs.light_day_of_week ?? 5,
   };
+
+  // Режим сохраняется в данных школы: его берёт и пересборка на экране расписания.
+  function choosePreset(value: string) {
+    setPreset(value);
+    if (!doc) return;
+    const saved = { ...doc, settings: { ...doc.settings, preset: value } };
+    setDoc(saved);
+    api.saveSchool(id, saved);
+  }
 
   function setPref(key: string, value: number) {
     const next = { ...prefs, [key]: value };
@@ -172,7 +182,7 @@ export function SchoolPage() {
         <fieldset disabled={running} className="mt-8 grid gap-8 md:grid-cols-2">
           <Choice name="preset" legend="Чьё удобство важнее" value={preset}
                   options={presets.map((p) => ({ value: p.name, label: p.name, about: p.about }))}
-                  onChange={setPreset} />
+                  onChange={choosePreset} />
           <div>
             <Segmented legend="Сколько искать" value={budget} options={BUDGETS} onChange={setBudget} />
             <p className="mt-3 max-w-prose text-small text-pencil">
