@@ -23,6 +23,7 @@
 
 from collections import defaultdict
 import os
+import threading
 import time
 from pathlib import Path
 from dataclasses import dataclass, field, replace
@@ -1227,6 +1228,24 @@ def _solve(
                     penalties.append((excess, max(1, round(w.peak_day * float(TUNING["peak_x"])))))
 
     solver = cp_model.CpSolver()
+
+    # «ОСТАНОВИТЬ» ДОЛЖНО РАБОТАТЬ В ЛЮБОЙ ФАЗЕ, А НЕ ТОЛЬКО МЕЖДУ РЕШЕНИЯМИ.
+    # Раньше should_stop читал только колбэк найденного решения (_Reporter). В фазе
+    # «найти первую сетку» колбэка нет, решений ещё нет — просьбу не слышал никто,
+    # через 10 с сервер убивал процесс, и завуч получал «процесс завершился без
+    # ответа» вместо лучшей сетки (сквозной прогон 15.09.2026). Наблюдатель раз
+    # в полсекунды спрашивает should_stop и прерывает поиск: stop_search() в
+    # OR-Tools безопасно звать из другого потока. Поток фоновый и заканчивается
+    # сам — после первой остановки или вместе с процессом.
+    if should_stop:
+        def _watch_stop() -> None:
+            while True:
+                time.sleep(0.5)
+                if should_stop():
+                    solver.stop_search()
+                    return
+
+        threading.Thread(target=_watch_stop, daemon=True).start()
     # Не меньше четырёх потоков, даже если ядер меньше, — см. available_cpus().
     solver.parameters.num_workers = max(4, min(16, available_cpus()))
     # Активнее использовать линейную релаксацию. Половина нашей модели — суммы
