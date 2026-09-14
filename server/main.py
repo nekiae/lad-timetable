@@ -7,11 +7,14 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hmac
 import json
+import os
 from dataclasses import asdict
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -34,6 +37,32 @@ DAY_NAMES = {1: "Понедельник", 2: "Вторник", 3: "Среда", 
 
 app = FastAPI(title="ЛАД", version="0.1")
 app.include_router(entry_router)  # ввод данных — server/entry.py
+
+# ОБЩИЙ ПАРОЛЬ НА ВСЁ ПРИЛОЖЕНИЕ, если задан LAD_PASSWORD.
+#
+# Вход по почте — первое, что режется по плану (docs/PLAN.md), а открытое
+# в интернет приложение с данными школы без замка оставлять нельзя. Базовая
+# HTTP-авторизация браузера — самый короткий честный замок: окно ввода рисует
+# сам браузер, пароль он запоминает и сам подставляет в fetch и EventSource.
+# Имя пользователя любое, проверяется только пароль. Локально переменная
+# не задана — замка нет. /api/health открыт: по нему хостинг проверяет, жив ли сервер.
+PASSWORD = os.environ.get("LAD_PASSWORD", "")
+
+
+@app.middleware("http")
+async def password_gate(request: Request, call_next):
+    if not PASSWORD or request.url.path == "/api/health":
+        return await call_next(request)
+    header = request.headers.get("authorization", "")
+    if header.lower().startswith("basic "):
+        try:
+            _, _, given = base64.b64decode(header[6:]).decode("utf-8").partition(":")
+        except (ValueError, UnicodeDecodeError):
+            given = ""
+        if hmac.compare_digest(given.encode(), PASSWORD.encode()):
+            return await call_next(request)
+    return Response("Нужен пароль ЛАД", status_code=401, media_type="text/plain; charset=utf-8",
+                    headers={"WWW-Authenticate": 'Basic realm="LAD", charset="UTF-8"'})
 
 
 # ---------------------------------------------------------------- помощники
