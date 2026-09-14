@@ -54,6 +54,13 @@ function buildGrid(dir: Directory, lessons: LessonDTO[]) {
   return grid;
 }
 
+// Уроки одной клетки, сгруппированные по предмету (подгруппы деления).
+function bySubject(cell: number[], lessons: LessonDTO[]) {
+  const groups = new Map<string, number[]>();
+  for (const i of cell) groups.set(lessons[i].subject_id, [...(groups.get(lessons[i].subject_id) ?? []), i]);
+  return [...groups.values()];
+}
+
 // Подсветка клеток при правке — единственное место, где интерфейс
 // позволяет себе цвет крупно (docs/DESIGN.md §2.1).
 const TINT: Record<Verdict["level"], string> = {
@@ -258,15 +265,22 @@ export function SchedulePage() {
                                 dayBorder(period),
                                 isSource && "outline outline-2 -outline-offset-2 outline-pen",
                                 target ? TINT[verdict.level] : "hover:bg-paper")}>
-                            {cell.map((i) => {
-                              const l = lessons[i];
-                              const part = dir.groups[l.group_id]?.part;
+                            {bySubject(cell, lessons).map((same) => {
+                              const l = lessons[same[0]];
                               const subject = dir.subjects[l.subject_id] ?? l.subject_id;
+                              // Подгруппы одного предмета — одной записью: предмет один раз,
+                              // учителя через косую. Иначе каждая клетка с делением
+                              // занимает четыре строки и растягивает весь ряд недели.
+                              const part = same.length === 1 ? dir.groups[l.group_id]?.part : null;
+                              const title = same.map((i) => {
+                                const x = lessons[i];
+                                const p = dir.groups[x.group_id]?.part;
+                                return `${subject}${p ? `, ${p} гр.` : ""}\n${dir.teachers[x.teacher_id] ?? ""}${x.room_id ? `\nкаб. ${x.room_id}` : ""}`;
+                              }).join("\n\n");
                               return (
-                                <div key={i} className="py-0.5"
-                                     title={`${subject}${part ? `, ${part} гр.` : ""}\n${dir.teachers[l.teacher_id] ?? ""}${l.room_id ? `\nкаб. ${l.room_id}` : ""}`}>
+                                <div key={same[0]} className="py-0.5" title={title}>
                                   <div className="font-medium">{short(subject)}{part ? ` (${part})` : ""}</div>
-                                  <div className="text-pencil">{teacherName(l.teacher_id)}</div>
+                                  <div className="text-pencil">{same.map((i) => teacherName(lessons[i].teacher_id)).join(" / ")}</div>
                                 </div>
                               );
                             })}

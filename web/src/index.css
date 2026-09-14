@@ -15,6 +15,14 @@
   }
 }
 
+@layer utilities {
+  /* Узкая ширина той же семьи — только данные сетки (docs/DESIGN.md §4).
+     Отдельный Plex Sans Condensed не годится: в нём нет кириллицы. */
+  .font-narrow {
+    font-stretch: 85%;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

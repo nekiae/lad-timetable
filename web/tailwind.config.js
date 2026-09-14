@@ -18,8 +18,7 @@ export default {
         no: { DEFAULT: "#C9302C", soft: "#FBEAE9" },
       },
       fontFamily: {
-        sans: ['"IBM Plex Sans"', "system-ui", "-apple-system", '"Segoe UI"', "sans-serif"],
-        narrow: ['"IBM Plex Sans Condensed"', '"IBM Plex Sans"', '"Arial Narrow"', "sans-serif"],
+        sans: ['"IBM Plex Sans Variable"', "system-ui", "-apple-system", '"Segoe UI"', "sans-serif"],
       },
       fontSize: {
         title: ["28px", { lineHeight: "34px", fontWeight: "600", letterSpacing: "-0.01em" }],
