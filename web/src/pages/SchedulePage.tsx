@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 
-import { api, type Directory, type LessonDTO, type Logic, type Progress, type Report, type Schedule, type Verdict } from "../api";
-import { Button, ButtonLink, EmptyState, Notice, Panel, Reasons, cx } from "../ui";
+import { api, type Directory, type LessonDTO, type Logic, type Progress, type Report, type Schedule, type ScheduleVersion,
+         type Verdict } from "../api";
+import { Button, ButtonLink, EmptyState, Notice, Panel, Reasons, cx, inputClass, when } from "../ui";
 import { Key, MOD } from "../CommandPalette";
 import { DifficultyMap } from "./DifficultyMap";
 
@@ -155,8 +156,31 @@ export function SchedulePage() {
     };
   }, []);
 
+  // Версии: ?version= открывает прежнюю, без него — текущую (последнюю сохранённую).
+  const version = searchParams.get("version");
+  const [versions, setVersions] = useState<ScheduleVersion[]>();
+  const [showVersions, setShowVersions] = useState(false);
+  const [naming, setNaming] = useState(false);
+  const [versionName, setVersionName] = useState("");
+  // Убрать ?version= из адреса, не перезагружая сетку: после сохранения или
+  // пересборки открытая сетка УЖЕ текущая, а перезагрузка стёрла бы «Отменить ход».
+  const skipNextLoad = useRef(false);
+  const refreshVersions = () => api.versions(id).then(setVersions).catch(() => undefined);
+
   useEffect(() => {
-    api.latest(id)
+    if (skipNextLoad.current) {
+      skipNextLoad.current = false;
+      return;
+    }
+    setHistory([]);
+    setSelected(null);
+    setHeat(null);
+    setPreview(null);
+    setLast(null);
+    setPins([]);
+    setRebuildResult(null);
+    setSaved("idle");
+    (version ? api.schedule(id, version) : api.latest(id))
       .then((s) => {
         setSchedule(s);
         setLessons(s.lessons);
@@ -164,7 +188,21 @@ export function SchedulePage() {
       })
       .catch(() => setSchedule(null));
     api.school(id).then((s) => setSettings(s.doc.settings)).catch(() => undefined);
-  }, [id]);
+    refreshVersions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, version]);
+
+  // Несохранённые ходы не теряются молча: браузер переспросит перед уходом.
+  const unsaved = history.length > 0;
+  useEffect(() => {
+    if (!unsaved) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [unsaved]);
 
   useEffect(() => {
     if (!rebuild) return;
@@ -289,12 +327,51 @@ export function SchedulePage() {
     setSaved("idle");
   }
 
+  function dropVersionParam() {
+    if (!version) return;
+    skipNextLoad.current = true;
+    setSearchParams((p) => {
+      p.delete("version");
+      return p;
+    }, { replace: true });
+  }
+
   async function save() {
     setSaved("saving");
-    await api.saveEdited(id, lessons);
+    const { id: savedId } = await api.saveEdited(id, lessons, versionName);
     setHistory([]);
     setSaved("saved");
+    setNaming(false);
+    setVersionName("");
+    setLast(null); // карточка прошлого хода после сохранения — уже не новость
+    setSchedule((s) => (s ? { ...s, id: savedId, meta: { status: "EDITED" } } : s));
+    dropVersionParam();
+    refreshVersions();
   }
+
+  function openVersion(versionId: string) {
+    setSearchParams((p) => {
+      if (versions?.[0]?.id === versionId) p.delete("version");
+      else p.set("version", versionId);
+      p.delete("teacher");
+      p.delete("class");
+      return p;
+    });
+  }
+
+  async function restoreOpened() {
+    if (!schedule) return;
+    const { schedule_id } = await api.restoreVersion(id, schedule.id);
+    setSchedule((s) => (s ? { ...s, id: schedule_id } : s));
+    dropVersionParam();
+    refreshVersions();
+  }
+
+  const clearFocus = () => setSearchParams((p) => {
+    p.delete("teacher");
+    p.delete("class");
+    return p;
+  });
 
   const samePlace = (a: LessonDTO, b: LessonDTO) =>
     lessonKey(a) === lessonKey(b) && a.day === b.day && a.period === b.period;
@@ -365,6 +442,8 @@ export function SchedulePage() {
         const fresh = await api.schedule(id, done.schedule_id);
         pendingAnimation.current = { before, rects: captureRects(dir!, before) };
         setHistory((h) => [...h, { lessons: before, report: beforeReport }]);
+        dropVersionParam();
+        refreshVersions();
         setSchedule(fresh);
         setLessons(fresh.lessons);
         setReport(fresh.report);
@@ -411,6 +490,11 @@ export function SchedulePage() {
     const target = e.target as HTMLElement;
     if (target.closest?.("input, textarea, select, [role=dialog]") || rebuild) return;
     const mod = e.metaKey || e.ctrlKey;
+    if (mod && e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      if (history.length) setNaming(true);
+      return;
+    }
     if (mod && !e.shiftKey && e.key.toLowerCase() === "z") {
       if (history.length) {
         e.preventDefault();
@@ -427,7 +511,8 @@ export function SchedulePage() {
       setCursor(null);
       setHoverTeacher(null);
       heatRequest.current = null;
-      if (lockedTeacher || focusClass) setSearchParams({});
+      setNaming(false);
+      if (lockedTeacher || focusClass) clearFocus();
       return;
     }
     const step = ({ ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] } as
@@ -544,9 +629,14 @@ export function SchedulePage() {
           </button>
           <Button disabled={!history.length} onClick={undo}>Отменить ход</Button>
           <Button variant={history.length ? "primary" : "quiet"}
-                  disabled={!history.length || saved === "saving"} onClick={save}>
+                  disabled={!history.length || saved === "saving"} onClick={() => setNaming(true)}>
             {saved === "saved" ? "Версия сохранена" : "Сохранить версию"}
           </Button>
+          <button type="button" aria-pressed={showVersions} onClick={() => setShowVersions((on) => !on)}
+                  className={cx("inline-flex items-center rounded border px-4 py-2 font-medium transition-colors duration-150",
+                                showVersions ? "border-pen bg-pen-soft text-pen" : "border-rule bg-sheet hover:border-pencil")}>
+            Версии{versions ? ` (${versions.length})` : ""}
+          </button>
           <Button onClick={() => api.exportXlsx(id, lessons, hideNames)}>Скачать Excel</Button>
           {/* Печать берёт сохранённую версию — несохранённые ходы на бумагу не попадут. */}
           {history.length === 0 && <ButtonLink to={`/s/${id}/print`}>Печать</ButtonLink>}
@@ -565,6 +655,18 @@ export function SchedulePage() {
         </Notice>
       )}
 
+      {/* Открыта не текущая версия: всё остальное (замены, печать, «Что если»)
+          работает с текущей — об этом надо сказать, а не молча показать старую сетку. */}
+      {versions && versions[0] && schedule.id !== versions[0].id && history.length === 0 && (
+        <Notice tone="info" className="mt-4" title={`Открыта версия от ${when(schedule.created_at)}`}>
+          <p>Текущая — от {when(versions[0].created_at)}. Замены, печать и «Что если» берут текущую.</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button onClick={restoreOpened}>Сделать эту версию текущей</Button>
+            <Button onClick={() => openVersion(versions[0].id)}>Открыть текущую</Button>
+          </div>
+        </Notice>
+      )}
+
       {schedule.stale && (
         <Notice tone="worse" className="mt-4">
           Данные школы изменились после составления. Сетка ниже — по прежним данным.
@@ -572,7 +674,11 @@ export function SchedulePage() {
       )}
 
       {showDifficulty && (
-        <DifficultyMap dir={dir} lessons={lessons} onClass={(classId) => setSearchParams({ class: classId })} />
+        <DifficultyMap dir={dir} lessons={lessons} onClass={(classId) => setSearchParams((p) => {
+          p.delete("teacher");
+          p.set("class", classId);
+          return p;
+        })} />
       )}
 
       <div className="mt-5 flex gap-6 max-lg:flex-col">
@@ -683,10 +789,32 @@ export function SchedulePage() {
 
         {/* Поля: здесь объяснения, как замечания учителя на полях тетради. */}
         <aside className="w-full shrink-0 space-y-4 lg:w-80" aria-live="polite">
+          {naming && history.length > 0 && (
+            <Panel as="div" className="text-small">
+              <form onSubmit={(e) => { e.preventDefault(); save(); }}>
+                <label className="block">
+                  <span className="text-heading">Сохранить версию</span>
+                  <span className="mt-1 block text-pencil">Название — по желанию, чтобы узнать версию в списке.</span>
+                  <input autoFocus value={versionName} onChange={(e) => setVersionName(e.target.value)}
+                         placeholder="Например, после замены Ивановой" className={cx(inputClass, "mt-2")} />
+                </label>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button type="submit" variant="primary" disabled={saved === "saving"}>
+                    {saved === "saving" ? "Сохраняю…" : "Сохранить"}
+                  </Button>
+                  <Button onClick={() => setNaming(false)}>Отмена</Button>
+                </div>
+              </form>
+            </Panel>
+          )}
+          {showVersions && versions && (
+            <VersionsPanel versions={versions} opened={schedule.id} blocked={history.length > 0}
+                           onOpen={openVersion} onClose={() => setShowVersions(false)} />
+          )}
           {activeTeacher && dir.teachers[activeTeacher] && !rebuild && (
             <TeacherCard name={hideNames ? `Учитель ${teacherIndex.get(activeTeacher)}` : dir.teachers[activeTeacher]}
                          dir={dir} lessons={lessons} teacherId={activeTeacher}
-                         locked={activeTeacher === lockedTeacher} onClear={() => setSearchParams({})} />
+                         locked={activeTeacher === lockedTeacher} onClear={clearFocus} />
           )}
           {rebuild && (
             <RebuildProgress rebuild={rebuild} now={now}
@@ -799,6 +927,48 @@ export function SchedulePage() {
         </div>
       )}
     </div>
+  );
+}
+
+// Версии расписания: каждое составление, пересборка и сохранённая правка.
+// Открыть можно любую; пока есть несохранённые ходы — нельзя, иначе они пропадут.
+function VersionsPanel({ versions, opened, blocked, onOpen, onClose }: {
+  versions: ScheduleVersion[]; opened: string; blocked: boolean;
+  onOpen: (id: string) => void; onClose: () => void;
+}) {
+  return (
+    <Panel as="div" className="text-small">
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="text-heading">Версии расписания</p>
+        <button type="button" className="text-pen underline-offset-4 hover:underline" onClick={onClose}>скрыть</button>
+      </div>
+      {blocked && <p className="mt-2 text-worse">Есть несохранённые ходы — сохраните или отмените их, чтобы открыть другую версию.</p>}
+      <ul className="mt-3 max-h-[60vh] space-y-1.5 overflow-auto">
+        {versions.map((v) => {
+          const isOpen = v.id === opened;
+          return (
+            <li key={v.id}>
+              <button type="button" disabled={blocked || isOpen} onClick={() => onOpen(v.id)}
+                      className={cx("w-full rounded border px-3 py-2 text-left transition-colors duration-150",
+                                    isOpen ? "border-pen bg-pen-soft" : "border-rule bg-sheet enabled:hover:border-pencil",
+                                    blocked && !isOpen && "opacity-60")}>
+                <span className="flex items-baseline justify-between gap-2">
+                  <span className="font-medium">{v.name || v.title}</span>
+                  {v.current && <span className="shrink-0 text-ok">текущая</span>}
+                </span>
+                {v.name && <span className="block text-pencil">{v.title}</span>}
+                <span className="block text-pencil">
+                  {when(v.created_at)}
+                  {v.summary && `. Нарушений норм ${v.summary.norms}, окон ${v.summary.gaps}`}
+                  {v.summary?.conflicts ? `, конфликтов ${v.summary.conflicts}` : ""}
+                </span>
+                {v.stale && <span className="block text-worse">по прежним данным школы</span>}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </Panel>
   );
 }
 

@@ -124,6 +124,18 @@ export type Schedule = {
   report: Report | null;
 };
 
+/** Версия расписания в списке версий. */
+export type ScheduleVersion = {
+  id: string;
+  created_at: number;
+  title: string;
+  name: string | null;
+  summary: { norms: number; gaps: number; conflicts: number } | null;
+  current: boolean;
+  /** Составлена по прежним данным школы. */
+  stale: boolean;
+};
+
 export type Reason = { text: string; source: string | null };
 
 export type Verdict = {
@@ -237,7 +249,8 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 }
 
 export const api = {
-  schools: () => call<{ id: string; name: string; updated_at: number }[]>("GET", "/schools"),
+  schools: () =>
+    call<{ id: string; name: string; updated_at: number; schedule_at: number | null }[]>("GET", "/schools"),
   createSchool: (name: string, fromExample: boolean) =>
     call<{ id: string }>("POST", "/schools", { name, from_example: fromExample }),
   school: (id: string) => call<{ id: string; revision: number; doc: Doc }>("GET", `/schools/${id}`),
@@ -290,8 +303,11 @@ export const api = {
   substitutions: (id: string, teacherId: string, day: number, lessons: LessonDTO[]) =>
     call<{ teacher: string; day: number; day_name: string; needs: Need[] }>(
       "POST", `/schools/${id}/substitutions`, { teacher_id: teacherId, day, lessons }),
-  saveEdited: (id: string, lessons: LessonDTO[]) =>
-    call<{ id: string }>("POST", `/schools/${id}/schedules`, { lessons }),
+  saveEdited: (id: string, lessons: LessonDTO[], name?: string) =>
+    call<{ id: string }>("POST", `/schools/${id}/schedules`, { lessons, name }),
+  versions: (id: string) => call<ScheduleVersion[]>("GET", `/schools/${id}/schedules`),
+  restoreVersion: (id: string, scheduleId: string) =>
+    call<{ schedule_id: string }>("POST", `/schools/${id}/schedules/${scheduleId}/restore`),
   substitutionSheet: (id: string, format: "pdf" | "xlsx", sheet: SheetDTO) =>
     fetch(`/api/schools/${id}/substitutions/sheet.${format}`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(sheet),

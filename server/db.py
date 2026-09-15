@@ -71,7 +71,11 @@ def _new_id() -> str:
 def list_schools() -> list[dict]:
     with connect() as conn:
         rows = conn.execute(
-            "SELECT id, name, updated_at FROM schools ORDER BY updated_at DESC").fetchall()
+            # schedule_at — когда сохранено последнее расписание (варианты «что если» не в счёт):
+            # по нему список школ предлагает сразу открыть готовое расписание.
+            "SELECT id, name, updated_at, (SELECT MAX(created_at) FROM schedules sc "
+            "WHERE sc.school_id = schools.id AND json_extract(sc.meta, '$.change') IS NULL) AS schedule_at "
+            "FROM schools ORDER BY updated_at DESC").fetchall()
     return [dict(row) for row in rows]
 
 
@@ -106,6 +110,13 @@ def save_school(school_id: str, doc: dict) -> int:
         return cur.lastrowid
 
 
+def get_revision(revision_id: int) -> dict | None:
+    """Документ школы в конкретной ревизии — для версий расписания по прежним данным."""
+    with connect() as conn:
+        row = conn.execute("SELECT doc FROM school_revisions WHERE id = ?", (revision_id,)).fetchone()
+    return json.loads(row["doc"]) if row else None
+
+
 def list_revisions(school_id: str, limit: int = 50) -> list[dict]:
     with connect() as conn:
         rows = conn.execute(
@@ -125,6 +136,22 @@ def save_schedule(school_id: str, revision_id: int | None, lessons: list[dict],
                       json.dumps(lessons, ensure_ascii=False),
                       json.dumps(meta, ensure_ascii=False), time.time()))
     return schedule_id
+
+
+def list_schedules(school_id: str, limit: int = 50) -> list[dict]:
+    """Версии расписания школы, новые сверху, без уроков (они тяжёлые)."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT id, revision_id, meta, created_at FROM schedules WHERE school_id = ? "
+            "AND json_extract(meta, '$.change') IS NULL ORDER BY created_at DESC LIMIT ?",
+            (school_id, limit)).fetchall()
+    return [{**dict(row), "meta": json.loads(row["meta"])} for row in rows]
+
+
+def update_schedule_meta(schedule_id: str, meta: dict) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE schedules SET meta = ? WHERE id = ?",
+                     (json.dumps(meta, ensure_ascii=False), schedule_id))
 
 
 def get_schedule(schedule_id: str) -> dict | None:

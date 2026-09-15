@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { api } from "../api";
-import { Button, cx } from "../ui";
+import { Button, ButtonLink, cx, when } from "../ui";
 
 // Первый экран. Человек пришёл, чтобы получить расписание своей школы,
 // поэтому здесь два действия: открыть свою или посмотреть на примере.
@@ -12,7 +12,7 @@ import { Button, cx } from "../ui";
 // с пунктом нормы. Это и есть то, чем ЛАД отличается от Untis и «Ректора»
 // (CLAUDE.md §3.3): нормы РБ и ответ на «почему сюда нельзя» (docs/DESIGN.md §2).
 export function SchoolsPage() {
-  const [schools, setSchools] = useState<{ id: string; name: string; updated_at: number }[]>();
+  const [schools, setSchools] = useState<Awaited<ReturnType<typeof api.schools>>>();
   const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
 
@@ -76,16 +76,22 @@ export function SchoolsPage() {
             <h2 className="mb-3 text-heading">Ваши школы</h2>
             <ul className="divide-y divide-rule rounded-lg border border-rule bg-sheet">
               {schools.map((s) => (
-                <li key={s.id}>
-                  <Link to={`/s/${s.id}`}
-                        className="flex flex-wrap items-baseline justify-between gap-x-4 px-4 py-3 transition-colors duration-150 hover:bg-paper">
+                // Готовое расписание открывается одной кнопкой — завуч приходит
+                // работать с ним, а не заново проходить составление.
+                <li key={s.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
+                  <Link to={s.schedule_at ? `/s/${s.id}/schedule` : `/s/${s.id}`}
+                        className="min-w-0 underline-offset-4 hover:text-pen hover:underline">
                     <span className="font-medium">{s.name}</span>
-                    <span className="text-small text-pencil">
-                      изменено {new Date(s.updated_at * 1000).toLocaleString("ru-RU", {
-                        day: "numeric", month: "long", hour: "2-digit", minute: "2-digit",
-                      })}
+                    <span className="block text-small text-pencil">
+                      {s.schedule_at ? `Расписание от ${when(s.schedule_at)}` : "Расписания пока нет"}. Данные изменены{" "}
+                      {when(s.updated_at)}.
                     </span>
                   </Link>
+                  <span className="flex shrink-0 flex-wrap gap-2">
+                    {s.schedule_at
+                      ? <ButtonLink to={`/s/${s.id}/schedule`}>Открыть расписание</ButtonLink>
+                      : <ButtonLink to={`/s/${s.id}/data`}>Продолжить ввод</ButtonLink>}
+                  </span>
                 </li>
               ))}
             </ul>

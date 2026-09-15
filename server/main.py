@@ -229,7 +229,9 @@ def solve(school_id: str, body: SolveRequest) -> dict:
         if result.get("type") == "result" and result.get("lessons"):
             job.schedule_id = db.save_schedule(
                 school_id, revision, result["lessons"],
-                {key: result.get(key) for key in ("status", "seconds", "penalty", "relaxed")})
+                {**{key: result.get(key) for key in ("status", "seconds", "penalty", "relaxed")},
+                 # Откуда версия — для списка версий: составление с нуля или пересборка.
+                 "kind": "rebuild" if body.keep else "solve", "pinned": len(body.pinned or [])})
 
     job = start_job(school_id, revision, doc, body.model_dump(), on_result)
     return {"job_id": job.id}
@@ -357,11 +359,74 @@ def move(school_id: str, body: MoveBody) -> dict:
             "report": _report(school, lessons)}
 
 
+class SaveBody(BaseModel):
+    lessons: list[dict]
+    name: str | None = None  # «после замены Ивановой» — чтобы версию узнали в списке
+
+
 @app.post("/api/schools/{school_id}/schedules")
-def save_edited(school_id: str, body: LessonsBody) -> dict:
+def save_edited(school_id: str, body: SaveBody) -> dict:
     """Сохранить сетку после ручной правки как новую версию."""
     _, revision = _load(school_id)
-    return {"id": db.save_schedule(school_id, revision, body.lessons, {"status": "EDITED"})}
+    meta = {"status": "EDITED", **({"name": body.name.strip()} if body.name and body.name.strip() else {})}
+    return {"id": db.save_schedule(school_id, revision, body.lessons, meta)}
+
+
+def _version_title(meta: dict) -> str:
+    if meta.get("accepted"):
+        return f"Принято из «Что если»: {meta['accepted']}"
+    if meta.get("status") == "EDITED":
+        return "Ручная правка"
+    if meta.get("status") == "RESTORED":
+        return "Возврат к прежней версии"
+    if meta.get("kind") == "rebuild":
+        return "Пересборка вокруг закреплённых"
+    return "Составлено автоматически"
+
+
+@app.get("/api/schools/{school_id}/schedules")
+def versions(school_id: str) -> list[dict]:
+    """Версии расписания: каждое составление, пересборка и сохранение правки.
+
+    Цифры версии (нарушения, окна) считаются один раз и кладутся в её meta —
+    по данным школы ТОЙ ревизии, по которой версия составлена: иначе старая
+    версия после правки нагрузки показывала бы конфликты, которых в ней не было.
+    """
+    _, revision = _load(school_id)
+    built: dict[int, object] = {}
+    result = []
+    for n, row in enumerate(db.list_schedules(school_id)):
+        meta = row["meta"]
+        summary = meta.get("summary")
+        if summary is None and row["revision_id"] is not None:
+            if row["revision_id"] not in built:
+                doc = db.get_revision(row["revision_id"])
+                school, problems = _build(doc) if doc else (None, ["нет ревизии"])
+                built[row["revision_id"]] = None if problems else school
+            school = built[row["revision_id"]]
+            if school is not None:
+                full = db.get_schedule(row["id"])
+                report = check(school, lessons_from_dict(full["lessons"]))
+                summary = {"norms": len(report.norm_violations), "gaps": report.teacher_gaps,
+                           "conflicts": len(report.structural_violations)}
+                db.update_schedule_meta(row["id"], {**meta, "summary": summary})
+        result.append({"id": row["id"], "created_at": row["created_at"], "title": _version_title(meta),
+                       "name": meta.get("name"), "summary": summary, "current": n == 0,
+                       "stale": row["revision_id"] != revision})
+    return result
+
+
+@app.post("/api/schools/{school_id}/schedules/{schedule_id}/restore")
+def restore(school_id: str, schedule_id: str) -> dict:
+    """Сделать прежнюю версию текущей: копия встаёт последней, история не теряется."""
+    _load(school_id)
+    row = db.get_schedule(schedule_id)
+    if not row or row["school_id"] != school_id or row["meta"].get("change"):
+        raise HTTPException(404, "Версия не найдена")
+    meta = {k: v for k, v in row["meta"].items() if k in ("seconds", "relaxed", "name", "summary")}
+    new_id = db.save_schedule(school_id, row["revision_id"], row["lessons"],
+                              {**meta, "status": "RESTORED", "from": schedule_id, "from_at": row["created_at"]})
+    return {"schedule_id": new_id}
 
 
 @app.post("/api/schools/{school_id}/export.xlsx")

@@ -146,6 +146,8 @@ with sync_playwright() as p:
             options.first.click()
             page.get_by_text("Уроки поменялись местами").wait_for()
             page.get_by_role("button", name="Сохранить версию").click()
+            page.get_by_placeholder("Например, после замены Ивановой").fill("Проверка e2e")
+            page.get_by_role("button", name="Сохранить", exact=True).click()
             page.get_by_role("button", name="Версия сохранена").wait_for()
             log("ручной ход сделан и сохранён")
         else:

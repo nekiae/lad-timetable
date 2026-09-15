@@ -188,4 +188,14 @@ export function EmptyState({ text, action }: { text: string; action?: ReactNode 
   );
 }
 
+// «сегодня, 14:05», «вчера, 09:12», «12 сентября, 16:40» — когда сохранено.
+export function when(seconds: number) {
+  const date = new Date(seconds * 1000);
+  const time = date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  const days = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(date).setHours(0, 0, 0, 0)) / 86_400_000);
+  if (days === 0) return `сегодня, ${time}`;
+  if (days === 1) return `вчера, ${time}`;
+  return `${date.toLocaleDateString("ru-RU", { day: "numeric", month: "long" })}, ${time}`;
+}
+
 export { cx };
