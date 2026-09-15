@@ -28,6 +28,8 @@ from lad.tables import (  # noqa: E402
     rooms_verdict, slot_label, spread_evenly, split_subjects, tables_from_dict, teacher_hours,
 )
 
+from lad.data_excel import GUIDE_SHEET, guide as excel_guide, normalize, write_book  # noqa: E402
+
 router = APIRouter(prefix="/api/schools/{school_id}")
 
 
@@ -198,22 +200,23 @@ SHEETS = {"Классы": "classes", "Кабинеты": "rooms", "Предме�
 
 
 @router.get("/data.xlsx")
-def data_xlsx(school_id: str) -> Response:
-    """Данные школы в Excel — и резервная копия, и шаблон для заполнения."""
+def data_xlsx(school_id: str, blank: bool = False) -> Response:
+    """Данные школы в Excel — и резервная копия, и шаблон. blank — пустой шаблон.
+
+    В файле первым листом «Как заполнять», у заголовков подсказки, в колонках
+    с выбором — выпадающие списки (lad/data_excel.py).
+    """
     _, tables = _open(school_id)
-    out = io.BytesIO()
-    with pd.ExcelWriter(out, engine="openpyxl") as writer:
-        for sheet, name in SHEETS.items():
-            table = tables[name]
-            (table if len(table) else blank_tables()[name].iloc[0:0]).to_excel(
-                writer, sheet_name=sheet, index=False)
-            writer.sheets[sheet].freeze_panes = "A2"
-            for column in writer.sheets[sheet].columns:
-                width = max(len(str(c.value or "")) for c in column) + 2
-                writer.sheets[sheet].column_dimensions[column[0].column_letter].width = min(40, width)
-    return Response(out.getvalue(),
+    name = "lad-shablon.xlsx" if blank else "lad-dannye.xlsx"
+    return Response(write_book(tables, blank=blank),
                     media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    headers={"Content-Disposition": 'attachment; filename="lad-dannye.xlsx"'})
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@router.get("/data/guide")
+def data_guide(school_id: str) -> dict:
+    """Как оформить Excel: листы, колонки, что писать — для панели на экране данных."""
+    return excel_guide()
 
 
 @router.post("/data.xlsx")
@@ -233,8 +236,11 @@ async def import_xlsx(school_id: str, request: Request) -> dict:
 
     by_name = {sheet.strip().lower(): name for sheet, name in SHEETS.items()}
     report = {"imported": {}, "unknown_sheets": [], "unknown_columns": {}, "missing_columns": {}}
+    issues: list[dict] = []
     for sheet, frame in book.items():
         name = by_name.get(str(sheet).strip().lower())
+        if str(sheet).strip().lower() == GUIDE_SHEET.lower():
+            continue  # лист-инструкция из шаблона — не данные
         if name is None:
             report["unknown_sheets"].append(str(sheet))
             continue
@@ -253,11 +259,16 @@ async def import_xlsx(school_id: str, request: Request) -> dict:
         # превращалась в подгруппу «nan» у каждого урока (найдено 14.09.2026
         # на круге «скачал → загрузил»: 4 ложные проблемы и испорченная нагрузка).
         frame = frame.astype(object).where(pd.notna(frame), "")
+        # «да/нет», «Ср», «Спортзал», «5,0» — к виду таблиц школы; непонятое — в отчёт.
+        frame, found = normalize(name, frame, str(sheet).strip())
+        issues.extend(found)
         doc.setdefault("tables", {})[name] = _records(frame)
         report["imported"][sheet] = len(frame)
 
     if not report["imported"]:
         raise HTTPException(422, "В файле нет ни одного листа ЛАД: ожидаются "
                                  + ", ".join(f"«{s}»" for s in SHEETS))
+    report["issues"] = issues[:60]
+    report["issues_total"] = len(issues)
     tables = tables_from_dict(doc)
     return _save(school_id, doc, tables, report=report)

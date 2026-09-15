@@ -293,7 +293,10 @@ def build_school(tables: dict[str, pd.DataFrame], settings: dict,
         # невозможным (проверено 26.08.2026).
         strict_default = kind in STRICT_ROOM_KINDS
         raw_strict = row.get("только в нём")
-        strict = strict_default if raw_strict is None or str(raw_strict) == "nan" \
+        # Пусто — «решит система по типу кабинета». Раньше пустая строка давала
+        # bool("") = False, и физкультура из загруженного Excel без этой колонки
+        # могла уйти в обычный класс (найдено 15.09.2026 при описании шаблона).
+        strict = strict_default if raw_strict is None or str(raw_strict).strip() in ("", "nan") \
             else bool(raw_strict)
         subjects.append(Subject(
             id=sid, name=name, required_room=kind, room_strict=strict,

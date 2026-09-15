@@ -5,6 +5,7 @@ import { api, type Doc, type ImportReport, type InputState } from "../../api";
 import { Button, ButtonLink, Notice, cx } from "../../ui";
 import type { Row } from "../../ui/DataTable";
 import { LoadStep } from "./LoadStep";
+import { ExcelGuide } from "./ExcelGuide";
 import { ClassesStep, RoomsStep, SchoolStep, SubjectsStep, TeachersStep } from "./steps";
 import { WishesStep } from "./WishesStep";
 
@@ -41,6 +42,7 @@ export function DataPage() {
   const [saving, setSaving] = useState<"idle" | "pending" | "saving" | "saved" | "error">("idle");
   const [error, setError] = useState<string>();
   const [report, setReport] = useState<ImportReport>();
+  const [showGuide, setShowGuide] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const latest = useRef<Doc>();
   const timer = useRef<number>();
@@ -147,6 +149,11 @@ export function DataPage() {
           <p aria-live="polite" className={cx("mr-2 text-small", saving === "error" ? "text-no" : "text-pencil")}>
             {savingText}
           </p>
+          <button type="button" aria-pressed={showGuide} onClick={() => setShowGuide((on) => !on)}
+                  className={cx("inline-flex items-center rounded border px-4 py-2 font-medium transition-colors duration-150",
+                                showGuide ? "border-pen bg-pen-soft text-pen" : "border-rule bg-sheet hover:border-pencil")}>
+            Как оформить Excel
+          </button>
           <Button onClick={() => api.downloadData(id).catch(fail)}>Скачать в Excel</Button>
           {/* Загрузка заменяет только листы, которые есть в файле; прежние данные
               остаются в ревизиях школы. */}
@@ -157,13 +164,21 @@ export function DataPage() {
                    e.target.value = "";
                    if (!file) return;
                    const result = await run(() => api.importData(id, file));
-                   if (result) setReport(result.report);
+                   if (result) {
+                     setReport(result.report);
+                     setShowGuide(false); // отчёт встаёт под заголовком, а не за длинной панелью
+                   }
                  }} />
         </div>
       </div>
 
+      {showGuide && (
+        <ExcelGuide id={id} onClose={() => setShowGuide(false)} onTemplate={() => api.downloadData(id, true).catch(fail)} />
+      )}
+
       {report && (
-        <Notice tone={Object.keys(report.unknown_columns).length || report.unknown_sheets.length ? "worse" : "ok"}
+        <Notice tone={Object.keys(report.unknown_columns).length || report.unknown_sheets.length || report.issues_total
+          ? "worse" : "ok"}
                 className="mt-4"
                 title={`Загружено из Excel: ${Object.entries(report.imported).map(([s, n]) => `${s} — ${n}`).join(", ")}`}>
           {report.unknown_sheets.length > 0 && <p>Листы не распознаны и пропущены: {report.unknown_sheets.join(", ")}.</p>}
@@ -173,6 +188,22 @@ export function DataPage() {
           {Object.entries(report.missing_columns).map(([sheet, cols]) => (
             <p key={sheet}>{sheet}: в файле не было колонок {cols.join(", ")} — они пустые.</p>
           ))}
+          {report.issues_total > 0 && (
+            <div className="mt-2">
+              <p className="font-semibold">
+                Что система не поняла в файле: {report.issues_total}. Поправьте в Excel и загрузите снова — или прямо
+                в таблицах ниже.
+              </p>
+              <ul className="mt-1 list-disc space-y-0.5 pl-5">
+                {report.issues.map((issue, n) => (
+                  <li key={n}>Лист «{issue.sheet}», строка {issue.row}, колонка «{issue.column}»: {issue.message}</li>
+                ))}
+              </ul>
+              {report.issues_total > report.issues.length && (
+                <p className="mt-1">и ещё {report.issues_total - report.issues.length}</p>
+              )}
+            </div>
+          )}
           <button type="button" className="mt-1 text-pen underline-offset-4 hover:underline" onClick={() => setReport(undefined)}>
             Скрыть
           </button>

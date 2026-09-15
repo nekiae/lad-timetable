@@ -31,6 +31,19 @@ export type ImportReport = {
   unknown_sheets: string[];
   unknown_columns: Record<string, string[]>;
   missing_columns: Record<string, string[]>;
+  /** Значения, которые разбор не понял: лист, строка Excel, колонка и что писать. */
+  issues: { sheet: string; row: number; column: string; value: string; message: string }[];
+  issues_total: number;
+};
+
+/** Как оформить Excel: одно описание колонок с сервера (lad/data_excel.py). */
+export type ExcelGuideDTO = {
+  rules: string[];
+  sheets: {
+    sheet: string;
+    about: string;
+    columns: { name: string; kind: string; hint: string; example: string; required: boolean; options: string[] }[];
+  }[];
 };
 
 /** Ответ действия ввода: школа целиком после сохранения. */
@@ -336,14 +349,16 @@ export const api = {
   },
 
   /** Данные школы в Excel: резервная копия и шаблон для заполнения. */
-  async downloadData(id: string) {
-    const res = await fetch(`/api/schools/${id}/data.xlsx`);
+  async downloadData(id: string, blank = false) {
+    const res = await fetch(`/api/schools/${id}/data.xlsx?blank=${blank}`);
     if (!res.ok) throw new Error("Файл не скачался");
     const url = URL.createObjectURL(await res.blob());
-    const link = Object.assign(document.createElement("a"), { href: url, download: "lad-dannye.xlsx" });
+    const link = Object.assign(document.createElement("a"), {
+      href: url, download: blank ? "lad-shablon.xlsx" : "lad-dannye.xlsx" });
     link.click();
     URL.revokeObjectURL(url);
   },
+  excelGuide: (id: string) => call<ExcelGuideDTO>("GET", `/schools/${id}/data/guide`),
   importData: (id: string, file: File) =>
     fetch(`/api/schools/${id}/data.xlsx`, { method: "POST", body: file }).then(async (res) => {
       const data = await res.json();
