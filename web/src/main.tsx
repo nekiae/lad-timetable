@@ -13,6 +13,7 @@ import { DataPage } from "./pages/data/DataPage";
 import { SubstitutionsPage } from "./pages/SubstitutionsPage";
 import { PrintPage } from "./pages/PrintPage";
 import { WhatIfPage } from "./pages/WhatIfPage";
+import { ShowBar } from "./ShowBar";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
@@ -28,6 +29,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           <Route path="substitutions" element={<SubstitutionsPage />} />
         </Route>
       </Routes>
+      <ShowBar />
     </BrowserRouter>
   </React.StrictMode>,
 );

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { api } from "../api";
+import { STEPS, prepareShow, writeShow } from "../show";
 import { Button, ButtonLink, cx, when } from "../ui";
 
 // Первый экран. Человек пришёл, чтобы получить расписание своей школы,
@@ -19,6 +20,15 @@ export function SchoolsPage() {
   useEffect(() => {
     api.schools().then(setSchools);
   }, []);
+
+  // Режим показа: чистая копия примера и полоса маршрута внизу (web/src/show.ts).
+  async function startShow() {
+    setBusy(true);
+    const school = await prepareShow();
+    writeShow({ school, step: 0, notes: false });
+    setBusy(false);
+    navigate(STEPS[0].path(school));
+  }
 
   async function create(fromExample: boolean) {
     setBusy(true);
@@ -52,6 +62,10 @@ export function SchoolsPage() {
                 Открыть пример на 24 класса
               </Button>
             </div>
+            <button type="button" disabled={busy} onClick={startShow}
+                    className="mt-4 text-small text-pencil underline-offset-4 hover:text-pen hover:underline disabled:opacity-50">
+              Режим показа: пример и маршрут демо по шагам
+            </button>
           </div>
 
           <GridFragment />
