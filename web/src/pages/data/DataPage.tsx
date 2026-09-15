@@ -6,6 +6,7 @@ import { Button, ButtonLink, Notice, cx } from "../../ui";
 import type { Row } from "../../ui/DataTable";
 import { LoadStep } from "./LoadStep";
 import { ExcelGuide } from "./ExcelGuide";
+import { TarifImport } from "./TarifImport";
 import { ClassesStep, RoomsStep, SchoolStep, SubjectsStep, TeachersStep } from "./steps";
 import { WishesStep } from "./WishesStep";
 
@@ -43,6 +44,8 @@ export function DataPage() {
   const [error, setError] = useState<string>();
   const [report, setReport] = useState<ImportReport>();
   const [showGuide, setShowGuide] = useState(false);
+  const [showTarif, setShowTarif] = useState(false);
+  const [tarifDone, setTarifDone] = useState<string>();
   const fileInput = useRef<HTMLInputElement>(null);
   const latest = useRef<Doc>();
   const timer = useRef<number>();
@@ -154,6 +157,11 @@ export function DataPage() {
                                 showGuide ? "border-pen bg-pen-soft text-pen" : "border-rule bg-sheet hover:border-pencil")}>
             Как оформить Excel
           </button>
+          <button type="button" aria-pressed={showTarif} onClick={() => { setShowTarif((on) => !on); setShowGuide(false); setTarifDone(undefined); }}
+                  className={cx("inline-flex items-center rounded border px-4 py-2 font-medium transition-colors duration-150",
+                                showTarif ? "border-pen bg-pen-soft text-pen" : "border-rule bg-sheet hover:border-pencil")}>
+            Импорт своей таблицы нагрузки
+          </button>
           <Button onClick={() => api.downloadData(id).catch(fail)}>Скачать в Excel</Button>
           {/* Загрузка заменяет только листы, которые есть в файле; прежние данные
               остаются в ревизиях школы. */}
@@ -171,6 +179,19 @@ export function DataPage() {
                  }} />
         </div>
       </div>
+
+      {showTarif && (
+        <TarifImport id={id} run={run} onClose={() => setShowTarif(false)}
+                     onDone={(text) => { setShowTarif(false); setTarifDone(text); }} />
+      )}
+      {tarifDone && (
+        <Notice tone="ok" className="mt-4" title="Нагрузка загружена">
+          <p>{tarifDone}</p>
+          <button type="button" className="mt-1 text-pen underline-offset-4 hover:underline" onClick={() => setTarifDone(undefined)}>
+            Скрыть
+          </button>
+        </Notice>
+      )}
 
       {showGuide && (
         <ExcelGuide id={id} onClose={() => setShowGuide(false)} onTemplate={() => api.downloadData(id, true).catch(fail)} />

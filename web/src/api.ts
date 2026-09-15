@@ -230,6 +230,31 @@ export type Journal = {
   not_held: number;
 };
 
+/** Импорт чужой таблицы нагрузки (server/tarif.py). */
+export type TarifField = "class" | "subject" | "teacher" | "hours" | "subgroup";
+export type TarifGuess = {
+  header_row: number;
+  layout: "long" | "wide";
+  mapping: Record<TarifField, number | null>;
+  class_columns: number[];
+};
+export type TarifInspect = { sheets: { name: string; rows: string[][]; total_rows: number; guess: TarifGuess }[] };
+export type TarifSettings = TarifGuess & { fill_down: boolean; shorten: boolean };
+export type TarifBody = TarifSettings & { file: string; sheet: string; mode: "replace" | "add" };
+export type TarifPreview = {
+  rows: { класс: string; предмет: string; учитель: string; часов: number; подгруппа: string; row: number }[];
+  total: number;
+  hours: number;
+  skipped: { row: number; reason: string }[];
+  skipped_total: number;
+  matched: { from: string; to: string }[];
+  unknown_subjects: string[];
+  split: string[];
+  no_teacher: number;
+  new: { classes: string[]; subjects: string[]; teachers: string[] };
+  load_rows: number;
+};
+
 /** Лист на выдачу: заголовок, подпись и строки таблицы — ровно как на экране. */
 export type SheetDTO = { title: string; subtitle: string; rows: string[][] };
 
@@ -379,6 +404,16 @@ export const api = {
     link.click();
     URL.revokeObjectURL(url);
   },
+  tarifInspect: (id: string, file: File) =>
+    fetch(`/api/schools/${id}/tarif/inspect`, { method: "POST", body: file }).then(async (res) => {
+      const data = await res.json();
+      if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Файл не разобрался");
+      return data as TarifInspect;
+    }),
+  tarifPreview: (id: string, body: TarifBody) => call<TarifPreview>("POST", `/schools/${id}/tarif/preview`, body),
+  tarifApply: (id: string, body: TarifBody) =>
+    call<Saved & { tarif: { rows: number; classes: string[]; subjects: string[]; teachers: string[]; load_rows: number;
+                            skipped_total: number; split: string[] } }>("POST", `/schools/${id}/tarif/apply`, body),
   excelGuide: (id: string) => call<ExcelGuideDTO>("GET", `/schools/${id}/data/guide`),
   importData: (id: string, file: File) =>
     fetch(`/api/schools/${id}/data.xlsx`, { method: "POST", body: file }).then(async (res) => {
