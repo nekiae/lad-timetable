@@ -46,6 +46,16 @@ CREATE TABLE IF NOT EXISTS schedules (
     created_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS sched_by_school ON schedules(school_id, created_at);
+CREATE TABLE IF NOT EXISTS substitutions (
+    id TEXT PRIMARY KEY,
+    school_id TEXT NOT NULL REFERENCES schools(id),
+    date TEXT NOT NULL,
+    absent TEXT NOT NULL,
+    rows TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    UNIQUE (school_id, date, absent)
+);
 """
 
 
@@ -168,6 +178,39 @@ def latest_schedule(school_id: str) -> dict | None:
             "ORDER BY created_at DESC LIMIT 1",
             (school_id,)).fetchone()
     return _schedule_row(row)
+
+
+# ---------------------------------------------------------------- журнал замен
+#
+# Замены хранятся ИМЕНАМИ, а не id учителей: id — это номер строки в таблице
+# учителей (t0, t1…), и он сдвигается, стоит завучу добавить или удалить
+# учителя. Журнал за сентябрь должен читаться и в ноябре.
+
+def save_substitution(school_id: str, date: str, absent: str, rows: list[dict]) -> dict:
+    now = time.time()
+    with connect() as conn:
+        found = conn.execute("SELECT id, created_at FROM substitutions WHERE school_id = ? AND date = ? AND absent = ?",
+                             (school_id, date, absent)).fetchone()
+        entry_id = found["id"] if found else _new_id()
+        conn.execute("INSERT OR REPLACE INTO substitutions VALUES (?, ?, ?, ?, ?, ?, ?)",
+                     (entry_id, school_id, date, absent, json.dumps(rows, ensure_ascii=False),
+                      found["created_at"] if found else now, now))
+    return {"id": entry_id, "date": date, "absent": absent, "rows": rows, "updated_at": now}
+
+
+def list_substitutions(school_id: str, month: str) -> list[dict]:
+    """Замены за месяц «YYYY-MM», по дате."""
+    with connect() as conn:
+        rows = conn.execute("SELECT id, date, absent, rows, updated_at FROM substitutions "
+                            "WHERE school_id = ? AND date LIKE ? ORDER BY date, absent",
+                            (school_id, f"{month}-%")).fetchall()
+    return [{**dict(row), "rows": json.loads(row["rows"])} for row in rows]
+
+
+def delete_substitution(school_id: str, entry_id: str) -> bool:
+    with connect() as conn:
+        cur = conn.execute("DELETE FROM substitutions WHERE school_id = ? AND id = ?", (school_id, entry_id))
+        return cur.rowcount > 0
 
 
 def _schedule_row(row) -> dict | None:

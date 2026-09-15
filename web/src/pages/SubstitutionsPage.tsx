@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 
-import { api, saveBlob, type Need, type Schedule, type SheetDTO } from "../api";
+import { api, saveBlob, type Journal, type JournalEntry, type Need, type Schedule, type SheetDTO } from "../api";
 import { Button, ButtonLink, EmptyState, Field, Notice, Panel, cx, inputClass } from "../ui";
+import { SubstitutionJournal } from "./SubstitutionJournal";
 
 const LEVEL = { best: "ведёт этот предмет", good: "знает класс", possible: "свободен в этот час" };
 
@@ -42,6 +43,18 @@ export function SubstitutionsPage() {
     api.latest(id).then(setSchedule).catch(() => setSchedule(null));
   }, [id]);
 
+  // Журнал замен: сохранённые замены по датам и итог месяца (server/journal.py).
+  const [month, setMonth] = useState(localToday().slice(0, 7));
+  const [journal, setJournal] = useState<Journal>();
+  // Запись журнала на выбранные дату и учителя, если её уже сохраняли.
+  const [savedEntry, setSavedEntry] = useState<JournalEntry | null>(null);
+  const [journalState, setJournalState] = useState<"idle" | "saving" | "saved">("idle");
+  const loadJournal = (m: string) => api.journal(id, m).then(setJournal).catch(() => setJournal(undefined));
+  useEffect(() => {
+    if (/^\d{4}-\d{2}$/.test(month)) loadJournal(month);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, month]);
+
   const dir = schedule?.directory;
   const teachers = useMemo(
     () => (dir ? Object.entries(dir.teachers).sort((a, b) => a[1].localeCompare(b[1], "ru")) : []), [dir]);
@@ -62,7 +75,12 @@ export function SubstitutionsPage() {
   const reset = () => {
     setNeeds(undefined);
     setPicked({});
+    setSavedEntry(null);
+    setJournalState("idle");
   };
+  const byName = new Map(Object.entries(dir.teachers).map(([tid, name]) => [name, tid]));
+  // В журнале — имена; при «Скрыть ФИО» показываем тот же «Учитель N», что и в листе.
+  const shownName = (name: string) => (hideNames ? (byName.has(name) ? nameOf(byName.get(name)!) : "Учитель") : name);
 
   // Лист замен один на все выходы: экран, PDF, Excel и текст для чата собираются
   // из одних строк, чтобы в файле стояло ровно то, что завуч выбрал на экране.
@@ -89,6 +107,47 @@ export function SubstitutionsPage() {
     }
   }
 
+  async function saveJournal() {
+    if (!needs) return;
+    setJournalState("saving");
+    try {
+      const entry = await api.saveJournal(id, {
+        date,
+        absent: dir!.teachers[absent],
+        rows: needs.map((n) => ({ period: n.period, group: n.group_name, subject: n.subject, room: n.room_id ?? "",
+                                  substitute: picked[n.index] ? dir!.teachers[picked[n.index]] : "" })),
+      });
+      setSavedEntry(entry);
+      setJournalState("saved");
+      if (date.slice(0, 7) === month) loadJournal(month);
+      else setMonth(date.slice(0, 7));
+    } catch (e) {
+      setJournalState("idle");
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  function openEntry(entry: JournalEntry) {
+    const tid = byName.get(entry.absent);
+    if (!tid) {
+      setError(`Учителя «${entry.absent}» больше нет в данных школы — эту запись можно только скачать в Excel.`);
+      return;
+    }
+    setAbsent(tid);
+    setDate(entry.date);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    find(tid, entry.date);
+  }
+
+  async function removeEntry(entry: JournalEntry) {
+    await api.deleteJournal(id, entry.id);
+    if (savedEntry?.id === entry.id) {
+      setSavedEntry(null);
+      setJournalState("idle");
+    }
+    loadJournal(month);
+  }
+
   async function copyText() {
     if (!sheet) return;
     const lines = sheet.rows.map(([period, group, subject, room, who]) =>
@@ -111,15 +170,29 @@ export function SubstitutionsPage() {
     }
   }
 
-  async function find() {
-    if (!day) return;
+  // Подобрать замены. Если на эту дату и учителя замены уже сохранены в журнале —
+  // выбор берётся из журнала, а не заново «лучший кандидат»: завуч мог поменять
+  // его утром, и повторное открытие не должно молча переписать решение.
+  async function find(teacherId = absent, onDate = date) {
+    const at = onDate ? new Date(`${onDate}T12:00:00`) : null;
+    const onDay = at ? dir!.days.find((d) => d.n === at.getDay()) : undefined;
+    if (!teacherId || !onDay) return;
     setBusy(true);
     setError(undefined);
     try {
-      const result = await api.substitutions(id, absent, day.n, schedule!.lessons);
+      const [result, saved] = await Promise.all([
+        api.substitutions(id, teacherId, onDay.n, schedule!.lessons),
+        api.journal(id, onDate.slice(0, 7)),
+      ]);
+      const entry = saved.days.find((e) => e.date === onDate && e.absent === dir!.teachers[teacherId]) ?? null;
       setNeeds(result.needs);
-      setPicked(Object.fromEntries(result.needs.filter((n) => n.candidates[0])
-        .map((n) => [n.index, n.candidates[0].teacher_id])));
+      setSavedEntry(entry);
+      setJournalState(entry ? "saved" : "idle");
+      setPicked(Object.fromEntries(result.needs.flatMap((n) => {
+        const row = entry?.rows.find((r) => r.period === n.period && r.group === n.group_name && r.subject === n.subject);
+        if (row) return [[n.index, row.substitute ? byName.get(row.substitute) ?? "" : ""]];
+        return n.candidates[0] ? [[n.index, n.candidates[0].teacher_id]] : [];
+      })));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -154,7 +227,7 @@ export function SubstitutionsPage() {
           <Field label="Когда" className="w-full max-w-[12rem]">
             <input type="date" className={inputClass} value={date} onChange={(e) => { setDate(e.target.value); reset(); }} />
           </Field>
-          <Button variant="primary" disabled={!absent || !day || busy} onClick={find}>
+          <Button variant="primary" disabled={!absent || !day || busy} onClick={() => find()}>
             {busy ? "Подбираю…" : "Подобрать замены"}
           </Button>
         </div>
@@ -189,7 +262,10 @@ export function SubstitutionsPage() {
                       const on = picked[need.index] === c.teacher_id;
                       return (
                         <button key={c.teacher_id} type="button" role="radio" aria-checked={on}
-                                onClick={() => setPicked({ ...picked, [need.index]: c.teacher_id })}
+                                onClick={() => {
+                                  setPicked({ ...picked, [need.index]: c.teacher_id });
+                                  setJournalState("idle");
+                                }}
                                 className={cx("rounded border px-3 py-2 text-left text-small transition-colors duration-150",
                                               on ? "border-pen bg-pen-soft" : "border-rule bg-sheet hover:border-pencil")}>
                           <span className="flex flex-wrap items-baseline justify-between gap-x-3">
@@ -202,7 +278,10 @@ export function SubstitutionsPage() {
                       );
                     })}
                     <button type="button" role="radio" aria-checked={picked[need.index] === ""}
-                            onClick={() => setPicked({ ...picked, [need.index]: "" })}
+                            onClick={() => {
+                              setPicked({ ...picked, [need.index]: "" });
+                              setJournalState("idle");
+                            }}
                             className={cx("rounded border border-dashed px-3 py-2 text-left text-small transition-colors duration-150",
                                           picked[need.index] === "" ? "border-pen bg-pen-soft" : "border-rule hover:border-pencil")}>
                       <span className="text-body font-semibold">Не заменять</span>
@@ -221,6 +300,10 @@ export function SubstitutionsPage() {
           <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
             <h2 className="text-heading">Лист замен</h2>
             <div className="flex flex-wrap gap-2">
+              <Button variant="primary" disabled={journalState !== "idle"} onClick={saveJournal}>
+                {journalState === "saved" ? "Сохранено в журнал" : journalState === "saving" ? "Сохраняю…"
+                  : savedEntry ? "Обновить в журнале" : "Сохранить в журнал"}
+              </Button>
               <Button disabled={exporting !== null} onClick={() => download("pdf")}>
                 {exporting === "pdf" ? "Готовлю PDF…" : "Скачать PDF"}
               </Button>
@@ -269,6 +352,16 @@ export function SubstitutionsPage() {
           </div>
         </section>
       )}
+
+      {savedEntry && journalState === "saved" && needs && needs.length > 0 && (
+        <p className="mt-3 max-w-5xl text-small text-pencil print:hidden">
+          Замены на эту дату сохранены в журнале — выбор выше взят оттуда.
+        </p>
+      )}
+
+      <SubstitutionJournal journal={journal} month={month} onMonth={setMonth} shownName={shownName}
+                           opened={savedEntry?.id ?? null} onOpen={openEntry} onDelete={removeEntry}
+                           onDownload={async () => saveBlob(await api.journalXlsx(id, month), `zameny-${month}.xlsx`)} />
     </div>
   );
 }

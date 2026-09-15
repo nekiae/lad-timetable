@@ -217,6 +217,19 @@ export type SolveDone = {
   schedule_id: string | null;
 };
 
+/** Журнал замен: одна запись — один отсутствующий учитель в одну дату. Имена, а не id. */
+export type JournalRow = { period: number; group: string; subject: string; room: string; substitute: string };
+export type JournalEntry = { id: string; date: string; absent: string; rows: JournalRow[]; updated_at: number };
+export type Journal = {
+  month: string;
+  days: JournalEntry[];
+  by_substitute: { name: string; lessons: number }[];
+  by_absent: { name: string; lessons: number }[];
+  /** Проведено замен (уроков). */
+  total: number;
+  not_held: number;
+};
+
 /** Лист на выдачу: заголовок, подпись и строки таблицы — ровно как на экране. */
 export type SheetDTO = { title: string; subtitle: string; rows: string[][] };
 
@@ -325,6 +338,14 @@ export const api = {
     fetch(`/api/schools/${id}/substitutions/sheet.${format}`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(sheet),
     }).then(blob),
+  journal: (id: string, month: string) =>
+    call<Journal>("GET", `/schools/${id}/substitutions/journal?month=${month}`),
+  saveJournal: (id: string, entry: { date: string; absent: string; rows: JournalRow[] }) =>
+    call<JournalEntry>("PUT", `/schools/${id}/substitutions/journal`, entry),
+  deleteJournal: (id: string, entryId: string) =>
+    call<{ ok: boolean }>("DELETE", `/schools/${id}/substitutions/journal/${entryId}`),
+  journalXlsx: (id: string, month: string) =>
+    fetch(`/api/schools/${id}/substitutions/journal.xlsx?month=${month}`).then(blob),
   printPdf: (id: string, by: "class" | "teacher", anonymize: boolean) =>
     fetch(`/api/schools/${id}/print.pdf?by=${by}&anonymize=${anonymize}`).then(blob),
   whatIf: (id: string, change: Change, mode: "keep" | "fresh") =>
