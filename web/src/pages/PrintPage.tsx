@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 
-import { api, type Directory, type LessonDTO, type Schedule } from "../api";
+import { api, saveBlob, type Directory, type LessonDTO, type Schedule } from "../api";
 import { Button, EmptyState, Segmented, cx } from "../ui";
 
 type By = "class" | "teacher";
@@ -16,6 +16,8 @@ export function PrintPage() {
   const by: By = params.get("by") === "teacher" ? "teacher" : "class";
   const [schedule, setSchedule] = useState<Schedule | null>();
   const [hideNames, setHideNames] = useState(false);
+  const [exporting, setExporting] = useState<"pdf" | "xlsx" | null>(null);
+  const [error, setError] = useState<string>();
 
   useEffect(() => {
     api.latest(id).then(setSchedule).catch(() => setSchedule(null));
@@ -29,6 +31,22 @@ export function PrintPage() {
   const order = new Map(Object.keys(dir.teachers).map((t, i) => [t, i + 1]));
   const teacherName = (tid: string) => (hideNames ? `Учитель ${order.get(tid)}` : dir.teachers[tid] ?? tid);
   const surname = (tid: string) => (hideNames ? teacherName(tid) : teacherName(tid).split(" ")[0]);
+
+  // PDF — все листы одним файлом, собирает сервер; Excel — книга расписания
+  // (классы, учителя, кабинеты), та же, что на экране расписания.
+  async function download(format: "pdf" | "xlsx") {
+    setExporting(format);
+    setError(undefined);
+    try {
+      if (format === "pdf")
+        saveBlob(await api.printPdf(id, by, hideNames), by === "class" ? "raspisanie-po-klassam.pdf" : "raspisanie-po-uchitelyam.pdf");
+      else await api.exportXlsx(id, schedule!.lessons, hideNames);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExporting(null);
+    }
+  }
 
   const sheets = by === "class"
     ? dir.classes.map((c) => ({
@@ -49,7 +67,7 @@ export function PrintPage() {
           </Link>
           <h1 className="mt-2 text-title">Печать расписания</h1>
           <p className="mt-1 text-pencil">
-            {sheets.length} листов A4. Печатается последняя сохранённая версия.
+            {sheets.length} листов A4. В файл и на печать идёт последняя сохранённая версия.
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-4">
@@ -60,9 +78,17 @@ export function PrintPage() {
                    onChange={(e) => setHideNames(e.target.checked)} />
             Скрыть ФИО учителей
           </label>
+          <Button disabled={exporting !== null} onClick={() => download("pdf")}>
+            {exporting === "pdf" ? "Готовлю PDF…" : "Скачать PDF"}
+          </Button>
+          <Button disabled={exporting !== null} onClick={() => download("xlsx")}>
+            {exporting === "xlsx" ? "Готовлю Excel…" : "Скачать Excel"}
+          </Button>
           <Button variant="primary" onClick={() => window.print()}>Распечатать</Button>
         </div>
       </div>
+
+      {error && <p role="alert" className="mb-6 text-no print:hidden">{error}</p>}
 
       <div className="space-y-8 print:space-y-0">
         {sheets.map((sheet) => (

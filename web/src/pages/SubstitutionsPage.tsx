@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 
-import { api, type Need, type Schedule } from "../api";
+import { api, saveBlob, type Need, type Schedule, type SheetDTO } from "../api";
 import { Button, ButtonLink, EmptyState, Field, Notice, Panel, cx, inputClass } from "../ui";
 
 const LEVEL = { best: "ведёт этот предмет", good: "знает класс", possible: "свободен в этот час" };
@@ -25,6 +25,18 @@ export function SubstitutionsPage() {
   const [hideNames, setHideNames] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  // Что сейчас готовится файлом — кнопка показывает это, а не молчит секунду.
+  const [exporting, setExporting] = useState<"pdf" | "xlsx" | "share" | null>(null);
+  const [copied, setCopied] = useState(false);
+  // «Отправить» — только где браузер умеет делиться файлом (телефон, Safari).
+  const canShare = useMemo(() => {
+    try {
+      return typeof navigator.share === "function"
+        && Boolean(navigator.canShare?.({ files: [new File([""], "zameny.pdf", { type: "application/pdf" })] }));
+    } catch {
+      return false;
+    }
+  }, []);
 
   useEffect(() => {
     api.latest(id).then(setSchedule).catch(() => setSchedule(null));
@@ -51,6 +63,53 @@ export function SubstitutionsPage() {
     setNeeds(undefined);
     setPicked({});
   };
+
+  // Лист замен один на все выходы: экран, PDF, Excel и текст для чата собираются
+  // из одних строк, чтобы в файле стояло ровно то, что завуч выбрал на экране.
+  // Точка в конце ФИО («Бондарь С. Л.») не удваивается точкой предложения.
+  const absentName = absent ? nameOf(absent).replace(/\.$/, "") : "";
+  const sheet: SheetDTO | null = needs && needs.length > 0 ? {
+    title: `Замены на ${dateText}`,
+    subtitle: `${dir.name}. Отсутствует: ${absentName}.`,
+    rows: needs.map((need) => [String(need.period), need.group_name, need.subject, need.room_id ?? "",
+                               picked[need.index] ? nameOf(picked[need.index]) : "урок не проводится"]),
+  } : null;
+  const fileName = (ext: string) => `zameny-${date}.${ext}`;
+
+  async function download(format: "pdf" | "xlsx") {
+    if (!sheet) return;
+    setExporting(format);
+    setError(undefined);
+    try {
+      saveBlob(await api.substitutionSheet(id, format, sheet), fileName(format));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExporting(null);
+    }
+  }
+
+  async function copyText() {
+    if (!sheet) return;
+    const lines = sheet.rows.map(([period, group, subject, room, who]) =>
+      `${period}-й урок, ${group}, ${subject}${room ? `, каб. ${room}` : ""} — ${who}`);
+    await navigator.clipboard.writeText([sheet.title, `Отсутствует: ${nameOf(absent)}`, "", ...lines].join("\n"));
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2000);
+  }
+
+  async function share() {
+    if (!sheet) return;
+    setExporting("share");
+    try {
+      const file = new File([await api.substitutionSheet(id, "pdf", sheet)], fileName("pdf"), { type: "application/pdf" });
+      await navigator.share({ files: [file], title: sheet.title });
+    } catch (e) {
+      if (!(e instanceof DOMException && e.name === "AbortError")) setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExporting(null);
+    }
+  }
 
   async function find() {
     if (!day) return;
@@ -159,13 +218,27 @@ export function SubstitutionsPage() {
 
       {needs && needs.length > 0 && (
         <section className="mt-10 max-w-5xl print:mt-0">
-          <div className="flex flex-wrap items-baseline justify-between gap-3 print:hidden">
+          <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
             <h2 className="text-heading">Лист замен</h2>
-            <Button onClick={() => window.print()}>Распечатать лист замен</Button>
+            <div className="flex flex-wrap gap-2">
+              <Button disabled={exporting !== null} onClick={() => download("pdf")}>
+                {exporting === "pdf" ? "Готовлю PDF…" : "Скачать PDF"}
+              </Button>
+              <Button disabled={exporting !== null} onClick={() => download("xlsx")}>
+                {exporting === "xlsx" ? "Готовлю Excel…" : "Скачать Excel"}
+              </Button>
+              <Button onClick={copyText}>{copied ? "Скопировано" : "Скопировать для чата"}</Button>
+              {canShare && (
+                <Button disabled={exporting !== null} onClick={share}>
+                  {exporting === "share" ? "Готовлю…" : "Отправить"}
+                </Button>
+              )}
+              <Button onClick={() => window.print()}>Распечатать</Button>
+            </div>
           </div>
           <div className="mt-3 rounded-lg border border-rule bg-sheet p-6 print:border-0 print:p-0">
             <p className="text-heading">Замены на {dateText}</p>
-            <p className="text-small text-pencil">{dir.name}. Отсутствует: {nameOf(absent)}.</p>
+            <p className="text-small text-pencil">{sheet?.subtitle}</p>
             <div className="mt-4 overflow-x-auto">
               <table className="w-full border-collapse text-small">
                 <thead>

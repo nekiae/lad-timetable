@@ -12,10 +12,12 @@ FROM python:3.13-slim
 WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir ortools==9.15.6755 pandas==3.0.5 openpyxl==3.1.5 \
-        fastapi==0.115.14 "uvicorn[standard]==0.32.1"
+        fastapi==0.115.14 "uvicorn[standard]==0.32.1" fpdf2==2.8.8
 COPY src/ src/
 COPY server/ server/
 COPY data/sanpin_by.json data/plan_75.json data/school.json data/
+# Шрифт для PDF-листов: в нём есть кириллица (lad/sheets.py). Лицензия — OFL.
+COPY data/fonts/ data/fonts/
 COPY --from=web /web/dist web/dist
 
 # База — на подключаемом томе, иначе школы пропадают при каждом деплое.

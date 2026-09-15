@@ -192,6 +192,31 @@ export type SolveDone = {
   schedule_id: string | null;
 };
 
+/** Лист на выдачу: заголовок, подпись и строки таблицы — ровно как на экране. */
+export type SheetDTO = { title: string; subtitle: string; rows: string[][] };
+
+async function blob(res: Response): Promise<Blob> {
+  if (!res.ok) {
+    const text = await res.text();
+    let detail: unknown = text;
+    try {
+      detail = JSON.parse(text).detail;
+    } catch {
+      /* ответ не JSON */
+    }
+    throw new Error(typeof detail === "string" ? detail : "Файл не собрался");
+  }
+  return res.blob();
+}
+
+/** Сохранить файл в загрузки. */
+export function saveBlob(data: Blob, name: string) {
+  const url = URL.createObjectURL(data);
+  const link = Object.assign(document.createElement("a"), { href: url, download: name });
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`/api${path}`, {
     method,
@@ -267,6 +292,12 @@ export const api = {
       "POST", `/schools/${id}/substitutions`, { teacher_id: teacherId, day, lessons }),
   saveEdited: (id: string, lessons: LessonDTO[]) =>
     call<{ id: string }>("POST", `/schools/${id}/schedules`, { lessons }),
+  substitutionSheet: (id: string, format: "pdf" | "xlsx", sheet: SheetDTO) =>
+    fetch(`/api/schools/${id}/substitutions/sheet.${format}`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(sheet),
+    }).then(blob),
+  printPdf: (id: string, by: "class" | "teacher", anonymize: boolean) =>
+    fetch(`/api/schools/${id}/print.pdf?by=${by}&anonymize=${anonymize}`).then(blob),
   whatIf: (id: string, change: Change, mode: "keep" | "fresh") =>
     call<{ label: string; budget: number; control: string; variant: string; blocked?: string[] }>(
       "POST", `/schools/${id}/whatif`, { change, mode }),

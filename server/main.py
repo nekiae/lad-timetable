@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from . import ROOT, db
 from .entry import router as entry_router
 from .jobs import JOBS, start_job
+from .sheets import router as sheets_router
 from .whatif import router as whatif_router
 
 from lad import explain, substitute  # noqa: E402
@@ -40,6 +41,7 @@ DAY_NAMES = {1: "Понедельник", 2: "Вторник", 3: "Среда", 
 app = FastAPI(title="ЛАД", version="0.1")
 app.include_router(entry_router)  # ввод данных — server/entry.py
 app.include_router(whatif_router)  # «что если» — server/whatif.py
+app.include_router(sheets_router)  # листы файлом: PDF и Excel — server/sheets.py
 
 # ОБЩИЙ ПАРОЛЬ НА ВСЁ ПРИЛОЖЕНИЕ, если задан LAD_PASSWORD.
 #
