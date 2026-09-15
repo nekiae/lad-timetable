@@ -108,6 +108,10 @@ export type Directory = {
   teachers: Record<string, string>;
   subjects: Record<string, string>;
   rooms: Record<string, string>;
+  /** Балл трудности предмета для класса: class_id → subject_id → балл. */
+  difficulty: Record<string, Record<string, number>>;
+  /** Рекомендованные дни пика нагрузки класса (п. 94 ССЭТ). */
+  peak_days: Record<string, number[]>;
 };
 
 export type Schedule = {

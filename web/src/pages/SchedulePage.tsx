@@ -1,8 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import { api, type Directory, type LessonDTO, type Logic, type Progress, type Report, type Schedule, type Verdict } from "../api";
 import { Button, ButtonLink, EmptyState, Notice, Panel, Reasons, cx } from "../ui";
+import { Key, MOD } from "../CommandPalette";
+import { DifficultyMap } from "./DifficultyMap";
 
 // Короткие названия для клетки сетки: полное «Физическая культура и здоровье»
 // в клетку шириной в класс не помещается. Полное — в подсказке.
@@ -108,6 +110,50 @@ export function SchedulePage() {
   // Остановил ли пересборку человек — в ref, а не в состоянии: читается в конце
   // задачи, и отложенное обновление состояния React могло бы не успеть.
   const stoppedByUser = useRef(false);
+  // Подсветка учителя по всей сетке: наведение на фамилию — пока курсор на ней,
+  // из поиска ⌘K (?teacher=) — пока не снимут Esc. Колонка класса из поиска — ?class=.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const lockedTeacher = searchParams.get("teacher");
+  const focusClass = searchParams.get("class");
+  const [hoverTeacher, setHoverTeacher] = useState<string | null>(null);
+  // Курсор клавиатуры: номер класса в сетке, день и урок.
+  const [cursor, setCursor] = useState<{ c: number; day: number; period: number } | null>(null);
+  const [showDifficulty, setShowDifficulty] = useState(() => {
+    try {
+      return localStorage.getItem("lad.difficulty") === "1";
+    } catch {
+      return false;
+    }
+  });
+  // Перетаскивание урока мышью. Начало — в ref: его читают обработчики окна.
+  // Призрак под курсором — в состоянии: его надо рисовать.
+  const dragStart = useRef<{ index: number; x: number; y: number; moved: boolean } | null>(null);
+  const [drag, setDrag] = useState<{ index: number; x: number; y: number; over: string | null } | null>(null);
+  const suppressClick = useRef(false);
+  // Где курсор при перетаскивании — для прокрутки сетки у края: неделя
+  // класса выше экрана, и до вторника без прокрутки не дотащить.
+  const dragPointer = useRef<{ x: number; y: number } | null>(null);
+  // Запрос подсветки недели: при перетаскивании урок отпускают раньше, чем
+  // пришёл ответ, — тогда ход ждёт этот же запрос, а не шлёт второй.
+  const heatRequest = useRef<{ index: number; promise: Promise<Record<string, Verdict>> } | null>(null);
+  // Обработчики окна вешаются один раз и зовут свежие функции из последней отрисовки.
+  const onKey = useRef<(e: KeyboardEvent) => void>();
+  const onPointerMove = useRef<(e: PointerEvent) => void>();
+  const onPointerUp = useRef<(e: PointerEvent) => void>();
+
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => onKey.current?.(e);
+    const move = (e: PointerEvent) => onPointerMove.current?.(e);
+    const up = (e: PointerEvent) => onPointerUp.current?.(e);
+    window.addEventListener("keydown", key);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    return () => {
+      window.removeEventListener("keydown", key);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+  }, []);
 
   useEffect(() => {
     api.latest(id)
@@ -136,6 +182,46 @@ export function SchedulePage() {
   const dir = schedule?.directory;
   const grid = useMemo(() => (dir ? buildGrid(dir, lessons) : new Map<string, number[]>()), [dir, lessons]);
 
+  // Из поиска: прокрутить к колонке класса или к первому уроку учителя.
+  useEffect(() => {
+    if (!dir) return;
+    let target: Element | null = null;
+    if (focusClass) target = document.querySelector(`th[data-class="${focusClass}"]`);
+    else if (lockedTeacher) {
+      const first = lessons.filter((l) => l.teacher_id === lockedTeacher)
+        .sort((a, b) => a.day - b.day || a.period - b.period)[0];
+      const classId = first && dir.groups[first.group_id]?.class_ids[0];
+      if (classId) target = document.querySelector(`[data-cell="${cellKey(classId, first.day, first.period)}"]`);
+    }
+    target?.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusClass, lockedTeacher, dir]);
+
+  // Прокрутка сетки, пока урок держат у её края: чем ближе к краю, тем быстрее.
+  const dragging = drag !== null;
+  useEffect(() => {
+    if (!dragging) return;
+    const timer = window.setInterval(() => {
+      const box = document.querySelector<HTMLElement>("[data-grid]");
+      const at = dragPointer.current;
+      if (!box || !at) return;
+      const r = box.getBoundingClientRect();
+      const edge = 48;
+      const speed = (d: number) => (d < edge ? Math.round(((edge - d) / edge) * 24) : 0);
+      const dy = speed(at.y - r.top - 40) ? -speed(at.y - r.top - 40) : speed(r.bottom - at.y);
+      const dx = speed(at.x - r.left - 48) ? -speed(at.x - r.left - 48) : speed(r.right - at.x);
+      if (dx || dy) box.scrollBy(dx, dy);
+    }, 16);
+    return () => window.clearInterval(timer);
+  }, [dragging]);
+
+  useEffect(() => {
+    const c = cursor && dir?.classes[cursor.c];
+    if (!c) return;
+    document.querySelector(`[data-cell="${cellKey(c.id, cursor.day, cursor.period)}"]`)
+      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [cursor, dir]);
+
   if (schedule === undefined) return <p className="px-4 py-10 text-pencil md:px-8">Загружаю расписание…</p>;
   if (schedule === null || !dir)
     return (
@@ -150,27 +236,37 @@ export function SchedulePage() {
     selected !== null ? dir.groups[lessons[selected].group_id]?.class_ids ?? [] : []);
   const seconds = schedule.meta.seconds ?? 0;
 
-  async function pick(index: number) {
+  // force — не снимать выбор, если урок уже выбран (начало перетаскивания).
+  async function pick(index: number, force = false) {
     if (selected === index) {
+      if (force) return;
       setSelected(null);
       setHeat(null);
+      heatRequest.current = null;
       return;
     }
     setSelected(index);
     setHeat(null);
     setPreview(null);
     setLast(null);
-    setHeat(await api.heatmap(id, lessons, index));
+    const promise = api.heatmap(id, lessons, index);
+    heatRequest.current = { index, promise };
+    const result = await promise;
+    if (heatRequest.current?.index === index) setHeat(result);
   }
 
-  async function place(day: number, period: number) {
+  function place(day: number, period: number) {
     if (selected === null || !heat) return;
-    const verdict = heat[`${day}-${period}`];
+    return placeAt(selected, heat, day, period);
+  }
+
+  async function placeAt(index: number, map: Record<string, Verdict>, day: number, period: number) {
+    const verdict = map[`${day}-${period}`];
     if (!verdict || verdict.level === "no") {
-      setLast(verdict ? { verdict, applied: false, target: { index: selected, day, period } } : null);
+      setLast(verdict ? { verdict, applied: false, target: { index, day, period } } : null);
       return;
     }
-    const result = await api.move(id, lessons, selected, day, period);
+    const result = await api.move(id, lessons, index, day, period);
     setHistory((h) => [...h, { lessons, report }]);
     setLessons(result.lessons);
     setReport(result.report);
@@ -296,6 +392,120 @@ export function SchedulePage() {
   const lastKey = last?.target ? `${last.target.day}-${last.target.period}` : null;
   const shown = preview && preview.key !== lastKey ? { verdict: preview.verdict, applied: false } : last;
   const dayBorder = (period: number) => (period === 1 ? "border-t-2 border-t-ink/20" : "border-t border-t-rule");
+  const activeTeacher = selected === null && !drag ? hoverTeacher ?? lockedTeacher : null;
+
+  function toggleDifficulty() {
+    setShowDifficulty((on) => {
+      try {
+        localStorage.setItem("lad.difficulty", on ? "0" : "1");
+      } catch {
+        /* нет хранилища — переключатель просто не запомнится */
+      }
+      return !on;
+    });
+  }
+
+  // Клавиатура: стрелки — курсор по сетке, Enter — выбрать урок или поставить
+  // выбранный в клетку под курсором, Esc — снять всё, ⌘Z — отменить ход.
+  onKey.current = (e) => {
+    const target = e.target as HTMLElement;
+    if (target.closest?.("input, textarea, select, [role=dialog]") || rebuild) return;
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && !e.shiftKey && e.key.toLowerCase() === "z") {
+      if (history.length) {
+        e.preventDefault();
+        undo();
+      }
+      return;
+    }
+    if (mod || e.altKey) return;
+    if (e.key === "Escape") {
+      setSelected(null);
+      setHeat(null);
+      setPreview(null);
+      setLast(null);
+      setCursor(null);
+      setHoverTeacher(null);
+      heatRequest.current = null;
+      if (lockedTeacher || focusClass) setSearchParams({});
+      return;
+    }
+    const step = ({ ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] } as
+      Record<string, [number, number]>)[e.key];
+    if (step) {
+      e.preventDefault();
+      const rows = dir.days.flatMap((d) => Array.from({ length: dir.periods }, (_, p) => ({ day: d.n, period: p + 1 })));
+      let next: { c: number; day: number; period: number };
+      if (cursor) {
+        const row = rows.findIndex((r) => r.day === cursor.day && r.period === cursor.period);
+        const r = rows[Math.min(rows.length - 1, Math.max(0, row + step[1]))];
+        next = { c: Math.min(dir.classes.length - 1, Math.max(0, cursor.c + step[0])), day: r.day, period: r.period };
+      } else if (selected !== null) {
+        const l = lessons[selected];
+        const c = dir.classes.findIndex((x) => dir.groups[l.group_id]?.class_ids.includes(x.id));
+        next = { c: Math.max(0, c), day: l.day, period: l.period };
+      } else {
+        next = { c: 0, ...rows[0] };
+      }
+      setCursor(next);
+      const key = `${next.day}-${next.period}`;
+      const verdict = heat?.[key];
+      setPreview(selected !== null && verdict && selectedClasses.has(dir.classes[next.c].id) ? { key, verdict } : null);
+      return;
+    }
+    if (e.key === "Enter" && cursor && !target.closest?.("button, a")) {
+      e.preventDefault();
+      const classId = dir.classes[cursor.c].id;
+      const cell = grid.get(`${classId}|${cursor.day}|${cursor.period}`) ?? [];
+      if (selected !== null && selectedClasses.has(classId) && !cell.includes(selected)) place(cursor.day, cursor.period);
+      else if (cell.length) pick(cell[0]);
+    }
+  };
+
+  const cellUnder = (e: PointerEvent) =>
+    (document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null)
+      ?.closest<HTMLElement>("td[data-cell]")?.dataset.cell ?? null;
+
+  // Перетаскивание: сдвинул урок на 6 px — он выбран, неделя класса подсвечена,
+  // под курсором призрак цвета клетки. Отпустил на своём классе — тот же ход,
+  // что щелчком: зелёная и жёлтая меняют уроки местами, на красной — карточка
+  // «Сюда нельзя» с кнопкой «Поставить сюда и пересобрать остальное».
+  onPointerMove.current = (e) => {
+    const start = dragStart.current;
+    if (!start) return;
+    if (!start.moved) {
+      if (Math.hypot(e.clientX - start.x, e.clientY - start.y) < 6) return;
+      start.moved = true;
+      setHoverTeacher(null);
+      pick(start.index, true);
+    }
+    dragPointer.current = { x: e.clientX, y: e.clientY };
+    setDrag({ index: start.index, x: e.clientX, y: e.clientY, over: cellUnder(e) });
+  };
+
+  onPointerUp.current = async (e) => {
+    const start = dragStart.current;
+    dragStart.current = null;
+    dragPointer.current = null;
+    if (!start?.moved) return;
+    // Щелчок, который браузер пришлёт следом за отпусканием, — не выбор урока.
+    suppressClick.current = true;
+    window.setTimeout(() => { suppressClick.current = false; }, 0);
+    setDrag(null);
+    const cell = cellUnder(e);
+    if (!cell) return;
+    const [classId, d, p] = cell.split("|");
+    const day = Number(d), period = Number(p);
+    const lesson = lessons[start.index];
+    if (!dir.groups[lesson.group_id]?.class_ids.includes(classId) || (lesson.day === day && lesson.period === period)) return;
+    const request = heatRequest.current;
+    if (request?.index !== start.index) return;
+    placeAt(start.index, await request.promise, day, period);
+  };
+
+  const dragOver = drag?.over?.split("|");
+  const dragLevel = drag && dragOver && heat && selected === drag.index && selectedClasses.has(dragOver[0])
+    ? heat[`${dragOver[1]}-${dragOver[2]}`]?.level : undefined;
 
   return (
     <div className="px-4 py-6 md:px-8">
@@ -327,6 +537,11 @@ export function SchedulePage() {
                    onChange={(e) => setHideNames(e.target.checked)} />
             Скрыть ФИО учителей
           </label>
+          <button type="button" aria-pressed={showDifficulty} onClick={toggleDifficulty}
+                  className={cx("inline-flex items-center rounded border px-4 py-2 font-medium transition-colors duration-150",
+                                showDifficulty ? "border-pen bg-pen-soft text-pen" : "border-rule bg-sheet hover:border-pencil")}>
+            Трудность по дням
+          </button>
           <Button disabled={!history.length} onClick={undo}>Отменить ход</Button>
           <Button variant={history.length ? "primary" : "quiet"}
                   disabled={!history.length || saved === "saving"} onClick={save}>
@@ -356,19 +571,23 @@ export function SchedulePage() {
         </Notice>
       )}
 
+      {showDifficulty && (
+        <DifficultyMap dir={dir} lessons={lessons} onClass={(classId) => setSearchParams({ class: classId })} />
+      )}
+
       <div className="mt-5 flex gap-6 max-lg:flex-col">
         <div data-grid className={cx("min-w-0 flex-1 overflow-auto rounded-lg border border-rule bg-sheet transition-opacity duration-300",
-                           rebuild && "pointer-events-none opacity-60")}
+                           rebuild && "pointer-events-none opacity-60", drag && "cursor-grabbing")}
              style={{ maxHeight: "calc(100vh - 180px)" }}>
-          <table className="border-separate border-spacing-0 font-narrow text-cell">
+          <table className="select-none border-separate border-spacing-0 font-narrow text-cell">
             <thead>
               <tr>
                 <th className="sticky left-0 top-0 z-30 border-b border-r border-rule bg-paper" />
                 {dir.classes.map((c) => (
-                  <th key={c.id} scope="col"
+                  <th key={c.id} scope="col" data-class={c.id}
                       className={cx(
                         "sticky top-0 z-20 min-w-[88px] border-b border-r border-rule px-2 py-2 text-left text-small font-semibold",
-                        selectedClasses.has(c.id) ? "bg-pen-soft text-pen" : "bg-paper")}>
+                        selectedClasses.has(c.id) || focusClass === c.id ? "bg-pen-soft text-pen" : "bg-paper")}>
                     {c.name}
                   </th>
                 ))}
@@ -391,11 +610,15 @@ export function SchedulePage() {
                         const cell = grid.get(`${c.id}|${day.n}|${period}`) ?? [];
                         const target = selectedClasses.has(c.id) && verdict;
                         const isSource = selected !== null && cell.includes(selected);
+                        const cursorHere = cursor !== null && dir.classes[cursor.c]?.id === c.id
+                          && cursor.day === day.n && cursor.period === period;
+                        const teacherHere = activeTeacher !== null && cell.some((i) => lessons[i].teacher_id === activeTeacher);
                         return (
                           <td key={c.id} data-cell={cellKey(c.id, day.n, period)}
                               onMouseEnter={() => target && setPreview({ key, verdict })}
                               onMouseLeave={() => target && setPreview(null)}
                               onClick={() => {
+                                if (suppressClick.current) return;
                                 if (target && !isSource) place(day.n, period);
                                 else if (cell.length) pick(cell[0]);
                               }}
@@ -403,8 +626,13 @@ export function SchedulePage() {
                                 "h-11 cursor-pointer border-r border-rule px-1.5 align-top",
                                 dayBorder(period),
                                 isSource && "outline outline-2 -outline-offset-2 outline-pen",
+                                !isSource && cursorHere && "outline-dashed outline-2 -outline-offset-2 outline-pen",
                                 flash.has(cellKey(c.id, day.n, period)) && "cell-flash",
-                                target ? TINT[verdict.level] : "hover:bg-paper")}>
+                                // Своя клетка не красится: «можно» на месте урока ничего не значит,
+                                // а зелёный призрак над ней обещал ход, которого не будет.
+                                target && !isSource ? TINT[verdict.level]
+                                  : teacherHere ? "bg-pen-soft"
+                                    : focusClass === c.id ? "bg-pen-soft/40 hover:bg-paper" : "hover:bg-paper")}>
                             {bySubject(cell, lessons).map((same) => {
                               const l = lessons[same[0]];
                               const subject = dir.subjects[l.subject_id] ?? l.subject_id;
@@ -419,9 +647,26 @@ export function SchedulePage() {
                               }).join("\n\n");
                               return (
                                 <div key={same[0]} title={isPinned(l) ? `${title}\n\nЗакреплён` : title}
-                                     className={cx("py-0.5", isPinned(l) && "-ml-1.5 border-l-[3px] border-pen pl-1")}>
+                                     onPointerDown={(e) => {
+                                       if (e.button === 0 && e.pointerType !== "touch" && !rebuild)
+                                         dragStart.current = { index: same[0], x: e.clientX, y: e.clientY, moved: false };
+                                     }}
+                                     className={cx("py-0.5", isPinned(l) && "-ml-1.5 border-l-[3px] border-pen pl-1",
+                                                   drag?.index === same[0] && "opacity-40")}>
                                   <div className="font-medium">{short(subject)}{part ? ` (${part})` : ""}</div>
-                                  <div className="text-pencil">{same.map((i) => teacherName(lessons[i].teacher_id)).join(" / ")}</div>
+                                  <div className="text-pencil">
+                                    {same.map((i, n) => (
+                                      <span key={i}>
+                                        {n > 0 && " / "}
+                                        <span onMouseEnter={() => !dragStart.current && setHoverTeacher(lessons[i].teacher_id)}
+                                              onMouseLeave={() => setHoverTeacher(null)}
+                                              className={cx("hover:text-pen",
+                                                            activeTeacher === lessons[i].teacher_id && "font-semibold text-pen")}>
+                                          {teacherName(lessons[i].teacher_id)}
+                                        </span>
+                                      </span>
+                                    ))}
+                                  </div>
                                 </div>
                               );
                             })}
@@ -438,6 +683,11 @@ export function SchedulePage() {
 
         {/* Поля: здесь объяснения, как замечания учителя на полях тетради. */}
         <aside className="w-full shrink-0 space-y-4 lg:w-80" aria-live="polite">
+          {activeTeacher && dir.teachers[activeTeacher] && !rebuild && (
+            <TeacherCard name={hideNames ? `Учитель ${teacherIndex.get(activeTeacher)}` : dir.teachers[activeTeacher]}
+                         dir={dir} lessons={lessons} teacherId={activeTeacher}
+                         locked={activeTeacher === lockedTeacher} onClear={() => setSearchParams({})} />
+          )}
           {rebuild && (
             <RebuildProgress rebuild={rebuild} now={now}
                              onStop={() => {
@@ -494,11 +744,18 @@ export function SchedulePage() {
             <Panel as="div" className="text-small">
               <p className="text-heading">Как поправить руками</p>
               <p className="mt-2 text-ink/80">
-                Щёлкните урок. Клетки его класса подсветятся: зелёные — можно поставить,
+                Щёлкните урок или перетащите его мышью. Клетки его класса подсветятся: зелёные — можно поставить,
                 жёлтые — можно, но станет хуже, красные — нельзя. Щелчок по клетке меняет
                 уроки местами. Урок можно закрепить — и пересобрать всё остальное вокруг
-                закреплённых.
+                закреплённых. Наведите на фамилию — подсветятся все уроки учителя.
               </p>
+              <ul className="mt-3 space-y-1.5 text-pencil">
+                <li><Key>←</Key> <Key>→</Key> <Key>↑</Key> <Key>↓</Key> по сетке</li>
+                <li><Key>Enter</Key> выбрать урок, поставить в клетку</li>
+                <li><Key>Esc</Key> снять выбор и подсветку</li>
+                <li><Key>{MOD} Z</Key> отменить ход</li>
+                <li><Key>{MOD} K</Key> найти класс или учителя</li>
+              </ul>
             </Panel>
           )}
           {selected === null && !shown && !rebuild && report?.logic && (
@@ -532,9 +789,58 @@ export function SchedulePage() {
           )}
         </aside>
       </div>
+
+      {drag && (
+        <div className={cx("pointer-events-none fixed z-50 rounded px-2 py-1 font-narrow text-cell font-medium text-white shadow-pop",
+                           dragLevel === "ok" ? "bg-ok" : dragLevel === "worse" ? "bg-worse" : dragLevel === "no" ? "bg-no" : "bg-pen")}
+             style={{ left: drag.x + 12, top: drag.y + 12 }}>
+          {short(dir.subjects[lessons[drag.index]?.subject_id] ?? "")}
+          {dragLevel === "no" && " — нельзя"}
+        </div>
+      )}
     </div>
   );
 }
+
+// Учитель под подсветкой: неделя цифрами — чтобы окна и «день ради одного
+// урока» были видны без подсчёта по сетке.
+function TeacherCard({ name, dir, lessons, teacherId, locked, onClear }: {
+  name: string; dir: Directory; lessons: LessonDTO[]; teacherId: string; locked: boolean; onClear: () => void;
+}) {
+  const byDay = new Map<number, Set<number>>();
+  for (const l of lessons) {
+    if (l.teacher_id !== teacherId) continue;
+    byDay.set(l.day, (byDay.get(l.day) ?? new Set()).add(l.period));
+  }
+  let total = 0, gaps = 0;
+  for (const periods of byDay.values()) {
+    total += periods.size;
+    gaps += Math.max(...periods) - Math.min(...periods) + 1 - periods.size;
+  }
+  return (
+    <Panel as="div" className="border-pen/40 text-small">
+      <p className="text-heading">{name}</p>
+      <p className="mt-1">
+        {total} {plural(total, "урок", "урока", "уроков")} в неделю, {byDay.size}{" "}
+        {plural(byDay.size, "день", "дня", "дней")} в школе, окон {gaps}.
+      </p>
+      <p className="mt-1 text-pencil">
+        {dir.days.map((d) => `${d.name.slice(0, 2)} ${byDay.get(d.n)?.size ?? 0}`).join(", ")}
+      </p>
+      {locked ? (
+        <Button className="mt-3" onClick={onClear}>Снять подсветку</Button>
+      ) : (
+        <p className="mt-2 text-pencil">Чтобы подсветка осталась, найдите учителя через <Key>{MOD} K</Key>.</p>
+      )}
+    </Panel>
+  );
+}
+
+// «1 урок», «3 урока», «5 уроков».
+const plural = (n: number, one: string, few: string, many: string) => {
+  const d = n % 10, h = n % 100;
+  return d === 1 && h !== 11 ? one : d >= 2 && d <= 4 && (h < 12 || h > 14) ? few : many;
+};
 
 // Куда можно поставить — списком. На плотной сетке годных клеток обычно
 // три-пять из сорока, и искать их прокруткой по подсветке утомительно.

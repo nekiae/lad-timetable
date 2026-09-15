@@ -108,6 +108,12 @@ def _directory(school) -> dict:
         "teachers": {t.id: t.name for t in school.teachers},
         "subjects": {s.id: s.name for s in school.subjects},
         "rooms": {r.id: r.kind.value for r in school.rooms},
+        # Карта трудности на экране расписания считается в браузере — после
+        # каждого хода, без запроса: балл предмета для класса и рекомендованные
+        # дни пика нагрузки (п. 94 ССЭТ).
+        "difficulty": {c.id: {s.id: school.norms.difficulty(s.name, c.parallel) or 0 for s in school.subjects}
+                       for c in school.classes},
+        "peak_days": {c.id: school.norms.peak_days(c.parallel or 5) for c in school.classes},
     }
 
 

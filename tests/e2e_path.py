@@ -128,7 +128,7 @@ with sync_playwright() as p:
             page.screenshot(path=f"{SHOTS}-problems.png", full_page=True)
             raise AssertionError("проверка данных нашла проблемы: " + page.locator("[role=alert]").inner_text())
         page.get_by_role("button", name="Составить расписание").click()
-        page.get_by_text(re.compile("Найдено вариантов")).wait_for(timeout=90_000)
+        page.get_by_text(re.compile("Найдено решений")).wait_for(timeout=90_000)
         log("первая сетка найдена")
         time.sleep(8)
         page.get_by_role("button", name="Остановить и взять лучшее").click()

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useParams } from "react-router-dom";
 
 import { api } from "./api";
+import { CommandPalette, Key, MOD } from "./CommandPalette";
 import { cx } from "./ui";
 
 // Шапка школы сверху, а не боковое меню: сетка на 24 класса шире любого
@@ -10,6 +11,19 @@ import { cx } from "./ui";
 export function Shell() {
   const { id = "" } = useParams();
   const [name, setName] = useState("");
+  const [palette, setPalette] = useState(false);
+
+  // ⌘K / Ctrl+K — поиск класса, учителя или раздела с любого экрана школы.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPalette((open) => !open);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   useEffect(() => {
     api.school(id).then((s) => setName(String(s.doc.settings.name || "Школа без названия")));
@@ -34,8 +48,13 @@ export function Shell() {
             <NavLink to={`/s/${id}/whatif`} className={tab}>Что если</NavLink>
             <NavLink to={`/s/${id}/substitutions`} className={tab}>Замены</NavLink>
           </nav>
+          <button type="button" onClick={() => setPalette(true)}
+                  className="ml-auto hidden shrink-0 items-center gap-2 rounded border border-rule bg-paper px-3 py-1.5 text-small text-pencil transition-colors duration-150 hover:border-pencil lg:inline-flex">
+            Найти класс или учителя <Key>{MOD} K</Key>
+          </button>
         </div>
       </header>
+      <CommandPalette id={id} open={palette} onClose={() => setPalette(false)} />
       <main className="min-w-0 flex-1">
         <Outlet />
       </main>
