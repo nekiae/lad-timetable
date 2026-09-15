@@ -38,7 +38,7 @@ export function Shell() {
       <header className="sticky top-0 z-40 border-b border-rule bg-sheet print:hidden">
         <div className="flex items-center gap-x-8 gap-y-1 px-4 max-sm:flex-wrap md:px-8">
           <div className="flex min-w-0 items-baseline gap-3 max-sm:pt-3">
-            <Link to="/" className="text-heading font-bold tracking-tight">ЛАД</Link>
+            <Link to="/" title="ЛАД — Логистика Академического Дня. К списку школ" className="text-heading font-bold tracking-tight">ЛАД</Link>
             <span className="truncate text-small text-pencil">{name}</span>
           </div>
           <nav className="flex gap-6 overflow-x-auto">

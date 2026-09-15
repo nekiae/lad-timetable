@@ -29,7 +29,11 @@ export function SchoolsPage() {
   return (
     <div className="min-h-screen px-4 py-10 md:px-8 md:py-16">
       <div className="mx-auto max-w-6xl">
-        <p className="text-heading font-bold tracking-tight">ЛАД</p>
+        {/* Расшифровка рядом с именем: «ЛАД» без неё читается как непонятная аббревиатура. */}
+        <p className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <span className="text-heading font-bold tracking-tight">ЛАД</span>
+          <span className="text-small text-pencil">Логистика Академического Дня</span>
+        </p>
 
         <div className="mt-10 grid items-center gap-12 lg:mt-16 lg:grid-cols-[1fr_minmax(0,34rem)]">
           <div>
@@ -58,10 +62,12 @@ export function SchoolsPage() {
           {[
             ["Данные", "Классы, кабинеты и черновик нагрузки — из типового учебного плана. Учителя — списком из Excel."],
             ["Составление", "Законная сетка — за секунды, дальше система убирает окна у учителей."],
-            ["Правка", "Каждое «нельзя» — с причиной словами и пунктом ССЭТ или СанПиН."],
+            ["Правка", <>Каждое «нельзя» — с причиной словами и пунктом{" "}
+              <abbr title="Специфические санитарно-эпидемиологические требования (постановление Совмина № 525)" className="cursor-help">ССЭТ</abbr>{" "}или{" "}
+              <abbr title="Санитарные нормы и правила (постановление Минздрава № 206)" className="cursor-help">СанПиН</abbr>.</>],
             ["Замены", "Учитель заболел — кто проведёт его уроки, и лист замен на печать."],
           ].map(([title, text], n) => (
-            <li key={title} className="flex gap-3">
+            <li key={n} className="flex gap-3">
               <span className="text-small text-pencil">{n + 1}</span>
               <span>
                 <span className="block font-semibold">{title}</span>
