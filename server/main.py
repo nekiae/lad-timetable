@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from . import ROOT, db
 from .entry import router as entry_router
 from .jobs import JOBS, start_job
+from .whatif import router as whatif_router
 
 from lad import explain, substitute  # noqa: E402
 from lad.excel import to_bytes as excel_bytes  # noqa: E402
@@ -29,6 +30,7 @@ from lad.model import Slot  # noqa: E402
 from lad.solve import PREFERENCES, PRESETS, RULE_SOURCES, RULE_TITLES, Rules, assign_rooms  # noqa: E402
 from lad.storage import lessons_from_dict, lessons_to_dict  # noqa: E402
 from lad.tables import build_school, check_norms, tables_from_dict  # noqa: E402
+from lad.quality import measure  # noqa: E402
 from lad.validate import check  # noqa: E402
 
 EXAMPLE = ROOT / "data" / "school.json"
@@ -37,6 +39,7 @@ DAY_NAMES = {1: "Понедельник", 2: "Вторник", 3: "Среда", 
 
 app = FastAPI(title="ЛАД", version="0.1")
 app.include_router(entry_router)  # ввод данных — server/entry.py
+app.include_router(whatif_router)  # «что если» — server/whatif.py
 
 # ОБЩИЙ ПАРОЛЬ НА ВСЁ ПРИЛОЖЕНИЕ, если задан LAD_PASSWORD.
 #
@@ -83,6 +86,13 @@ def _report_dict(report) -> dict:
     data["summary"] = report.summary()
     data["norm_violations"] = len(report.norm_violations)
     data["structural_violations"] = len(report.structural_violations)
+    return data
+
+
+def _report(school, lessons) -> dict:
+    """Отчёт валидатора плюс логика расписания сверх норм (lad/quality.py)."""
+    data = _report_dict(check(school, lessons))
+    data["logic"] = {k: v for k, v in measure(school, lessons).items() if k != "examples"}
     return data
 
 
@@ -268,7 +278,7 @@ def _schedule_payload(school_id: str, row: dict | None) -> dict:
         "stale": row["revision_id"] != db.get_school(school_id)[1],
         "directory": _directory(school),
         "lessons": row["lessons"],
-        "report": _report_dict(check(school, lessons)) if not problems else None,
+        "report": _report(school, lessons) if not problems else None,
     }
 
 
@@ -293,7 +303,7 @@ def validate(school_id: str, body: LessonsBody) -> dict:
     school, problems = _build(doc)
     if problems:
         raise HTTPException(422, {"problems": problems})
-    return _report_dict(check(school, lessons_from_dict(body.lessons)))
+    return _report(school, lessons_from_dict(body.lessons))
 
 
 def _verdict_dict(verdict) -> dict:
@@ -336,7 +346,7 @@ def move(school_id: str, body: MoveBody) -> dict:
     lessons = explain.apply_move(lessons, verdict, source, target)
     assign_rooms(school, lessons)
     return {"verdict": _verdict_dict(verdict), "lessons": lessons_to_dict(lessons),
-            "report": _report_dict(check(school, lessons))}
+            "report": _report(school, lessons)}
 
 
 @app.post("/api/schools/{school_id}/schedules")

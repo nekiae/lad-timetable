@@ -61,6 +61,42 @@ export type Report = {
   summary: Record<string, number>;
   norm_violations: number;
   structural_violations: number;
+  logic: Logic;
+};
+
+/** Логика расписания сверх норм — lad/quality.py. */
+export type Logic = {
+  day_spread_max: number;
+  classes_spread_3plus: number;
+  monday_heavy: number;
+  adjacent_two: number;
+  three_in_row: number;
+  teacher_single_days: number;
+  teacher_longest_day: number;
+};
+
+/** Изменение для «что если». */
+export type Change =
+  | { kind: "teacher_day_off"; teacher: string; day: number }
+  | { kind: "gym_plus" }
+  | { kind: "preset"; preset: string }
+  | { kind: "rule"; rule: string; value: string };
+
+export type ComparisonSide = {
+  id: string;
+  lessons: LessonDTO[];
+  seconds: number | null;
+  metrics: Logic & { norms: number; conflicts: number; teacher_gaps: number; teacher_days: number; moved: number };
+};
+
+export type Comparison = {
+  label: string;
+  change: Change;
+  mode: "keep" | "fresh";
+  budget: number;
+  stale: boolean;
+  control: ComparisonSide;
+  variant: ComparisonSide;
 };
 
 export type Directory = {
@@ -227,6 +263,13 @@ export const api = {
       "POST", `/schools/${id}/substitutions`, { teacher_id: teacherId, day, lessons }),
   saveEdited: (id: string, lessons: LessonDTO[]) =>
     call<{ id: string }>("POST", `/schools/${id}/schedules`, { lessons }),
+  whatIf: (id: string, change: Change, mode: "keep" | "fresh") =>
+    call<{ label: string; budget: number; control: string; variant: string; blocked?: string[] }>(
+      "POST", `/schools/${id}/whatif`, { change, mode }),
+  whatIfCompare: (id: string, control: string, variant: string) =>
+    call<Comparison>("GET", `/schools/${id}/whatif?control=${control}&variant=${variant}`),
+  whatIfApply: (id: string, control: string, variant: string) =>
+    call<{ schedule_id: string; label: string }>("POST", `/schools/${id}/whatif/apply`, { control, variant }),
 
   /** Ход составления: снимки прогресса, затем итог. Возвращает функцию отписки. */
   watch(jobId: string, onProgress: (p: Progress) => void, onDone: (d: SolveDone) => void,

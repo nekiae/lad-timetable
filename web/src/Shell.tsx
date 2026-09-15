@@ -31,6 +31,7 @@ export function Shell() {
             <NavLink to={`/s/${id}/data`} className={tab}>Данные</NavLink>
             <NavLink to={`/s/${id}`} end className={tab}>Составление</NavLink>
             <NavLink to={`/s/${id}/schedule`} className={tab}>Расписание</NavLink>
+            <NavLink to={`/s/${id}/whatif`} className={tab}>Что если</NavLink>
             <NavLink to={`/s/${id}/substitutions`} className={tab}>Замены</NavLink>
           </nav>
         </div>

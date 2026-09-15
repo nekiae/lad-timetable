@@ -136,7 +136,9 @@ def get_schedule(schedule_id: str) -> dict | None:
 def latest_schedule(school_id: str) -> dict | None:
     with connect() as conn:
         row = conn.execute(
-            "SELECT * FROM schedules WHERE school_id = ? ORDER BY created_at DESC LIMIT 1",
+            # Варианты «что если» (meta.change) — не расписание школы, пока их не приняли.
+            "SELECT * FROM schedules WHERE school_id = ? AND json_extract(meta, '$.change') IS NULL "
+            "ORDER BY created_at DESC LIMIT 1",
             (school_id,)).fetchone()
     return _schedule_row(row)
 

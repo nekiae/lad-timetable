@@ -74,7 +74,8 @@ def _worker(doc: dict, options: dict, events, stop_flag) -> None:
 
         result = solve(school, max_seconds=float(options.get("budget") or 300),
                        weights=weights, rules=rules, pinned=pinned, hint=hint, stay=stay,
-                       on_progress=on_progress, should_stop=stop_flag.is_set)
+                       on_progress=on_progress, should_stop=stop_flag.is_set,
+                       params=options.get("params"))
         lessons = assign_rooms(school, result.lessons) if result.ok else []
         events.put({
             "type": "result",

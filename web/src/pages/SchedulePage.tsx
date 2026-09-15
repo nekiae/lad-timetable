@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 
-import { api, type Directory, type LessonDTO, type Progress, type Report, type Schedule, type Verdict } from "../api";
+import { api, type Directory, type LessonDTO, type Logic, type Progress, type Report, type Schedule, type Verdict } from "../api";
 import { Button, ButtonLink, EmptyState, Notice, Panel, Reasons, cx } from "../ui";
 
 // Короткие названия для клетки сетки: полное «Физическая культура и здоровье»
@@ -33,7 +33,7 @@ const SHORT: Record<string, string> = {
   "Искусство (отечественная и мировая художественная культура)": "Искусство",
 };
 
-function short(name: string) {
+export function short(name: string) {
   return SHORT[name] ?? (name.length > 10 ? name.split(" ")[0].slice(0, 9) + "." : name);
 }
 
@@ -501,6 +501,9 @@ export function SchedulePage() {
               </p>
             </Panel>
           )}
+          {selected === null && !shown && !rebuild && report?.logic && (
+            <LogicCard logic={report.logic} classes={dir.classes.length} id={id} />
+          )}
           {selected !== null && !heat && (
             <Panel as="div" className="text-small text-pencil">Проверяю все клетки недели…</Panel>
           )}
@@ -621,6 +624,38 @@ function VerdictCard({ verdict, applied, onRebuild }: { verdict: Verdict; applie
         </div>
       )}
     </div>
+  );
+}
+
+// Логика расписания сверх норм (lad/quality.py): то, что завуч заметит
+// первым, хотя норм на это нет. Цифры пересчитываются после каждого хода.
+function LogicCard({ logic, classes, id }: { logic: Logic; classes: number; id: string }) {
+  const rows: [string, number | string][] = [
+    ["Классов, где дни отличаются на 3+ урока", `${logic.classes_spread_3plus} из ${classes}`],
+    ["Самый трудный день — понедельник", logic.monday_heavy],
+    ["Предмет на 2 часа в соседние дни", logic.adjacent_two],
+    ["Предмет на 3 часа три дня подряд", logic.three_in_row],
+    ["Выходов учителя ради одного урока", logic.teacher_single_days],
+    ["Самый длинный день учителя, уроков", logic.teacher_longest_day],
+  ];
+  return (
+    <Panel as="div" className="text-small">
+      <p className="text-heading">Логика расписания</p>
+      <p className="mt-1 text-pencil">Норм на это нет, но завуч и учителя заметят первым.</p>
+      <dl className="mt-2 divide-y divide-rule">
+        {rows.map(([label, value]) => (
+          <div key={label} className="flex items-baseline justify-between gap-3 py-1.5">
+            <dt className="min-w-0">{label}</dt>
+            <dd className="shrink-0 font-semibold">{value}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="mt-3">
+        <Link to={`/s/${id}/whatif`} className="font-medium text-pen underline-offset-4 hover:underline">
+          Проверить, что будет, если…
+        </Link>
+      </p>
+    </Panel>
   );
 }
 
