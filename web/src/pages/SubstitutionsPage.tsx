@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 
 import { api, saveBlob, type Journal, type JournalEntry, type Need, type Schedule, type SheetDTO } from "../api";
+import { useHideNames } from "../hideNames";
 import { Button, ButtonLink, EmptyState, Field, Notice, Panel, cx, inputClass } from "../ui";
 import { SubstitutionJournal } from "./SubstitutionJournal";
 
@@ -23,7 +24,7 @@ export function SubstitutionsPage() {
   const [date, setDate] = useState(localToday());
   const [needs, setNeeds] = useState<Need[]>();
   const [picked, setPicked] = useState<Record<number, string>>({});
-  const [hideNames, setHideNames] = useState(false);
+  const [hideNames] = useHideNames();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   // Что сейчас готовится файлом — кнопка показывает это, а не молчит секунду.
@@ -210,11 +211,6 @@ export function SubstitutionsPage() {
               Учитель заболел или уехал на курсы — система подберёт, кто проведёт его уроки, и объяснит почему.
             </p>
           </div>
-          <label className="flex cursor-pointer items-center gap-2 text-small">
-            <input type="checkbox" className="accent-pen" checked={hideNames}
-                   onChange={(e) => setHideNames(e.target.checked)} />
-            Скрыть ФИО учителей
-          </label>
         </div>
 
         <div className="mt-6 flex flex-wrap items-end gap-4">

@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { api, type Change, type Comparison, type ComparisonSide, type Directory, type LessonDTO, type Progress,
          type SolveDone } from "../api";
+import { alias, masker, useHideNames } from "../hideNames";
 import { Button, ButtonLink, EmptyState, Notice, Panel, Segmented, cx, inputClass } from "../ui";
 import { short } from "./SchedulePage";
 
@@ -94,6 +95,11 @@ export function WhatIfPage() {
   const strict = (settings.rules as Record<string, string>) ?? {};
   const hardRules = rules.filter((r) => (strict[r.key] ?? r.default) === "hard");
   const teachers = dir ? Object.values(dir.teachers).sort((a, b) => a.localeCompare(b, "ru")) : [];
+  // Список учителей и причины отказа приходят с фамилиями — при общем
+  // обезличивании их надо закрыть и здесь (§8.4). Значение в списке остаётся
+  // настоящим: его отправляем солверу.
+  const [hideNames] = useHideNames();
+  const mask = masker(hideNames, dir?.teachers ?? {});
 
   useEffect(() => {
     if (!teacher && teachers.length) setTeacher(teachers[0]);
@@ -204,7 +210,7 @@ export function WhatIfPage() {
                 <div className="mt-3 flex flex-wrap gap-3">
                   <select className={selectClass} value={teacher} aria-label="Учитель"
                           onChange={(e) => setTeacher(e.target.value)}>
-                    {teachers.map((name) => <option key={name}>{name}</option>)}
+                    {teachers.map((name) => <option key={name} value={name}>{mask(name)}</option>)}
                   </select>
                   <select className={selectClass} value={day} aria-label="День"
                           onChange={(e) => setDay(Number(e.target.value))}>
@@ -267,9 +273,9 @@ export function WhatIfPage() {
 
       {blocked && !running && !result && (
         <Notice tone="no" className="mt-6" title="Так расписание не сложится">
-          <p>{blocked.label}. Причины:</p>
+          <p>{mask(blocked.label)}. Причины:</p>
           <ul className="mt-1 list-disc space-y-1 pl-5">
-            {blocked.reasons.map((r) => <li key={r}>{r}</li>)}
+            {blocked.reasons.map((r) => <li key={r}>{mask(r)}</li>)}
           </ul>
           <p className="mt-2">Выберите другой день или сначала поменяйте нагрузку учителя.</p>
         </Notice>
@@ -489,6 +495,7 @@ function WeekCompare({ result, dir }: { result: Comparison; dir: Directory }) {
   }, [result]);
   const [who, setWho] = useState(initial);
   useEffect(() => setWho(initial), [initial]);
+  const [hideNames] = useHideNames();
 
   const left = cells(result.control.lessons, who), right = cells(result.variant.lessons, who);
   const teachers = Object.entries(dir.teachers).sort(([, x], [, y]) => x.localeCompare(y, "ru"));
@@ -502,7 +509,9 @@ function WeekCompare({ result, dir }: { result: Comparison; dir: Directory }) {
             {dir.classes.map((c) => <option key={c.id} value={`c:${c.id}`}>{c.name}</option>)}
           </optgroup>
           <optgroup label="Учителя">
-            {teachers.map(([tid, name]) => <option key={tid} value={`t:${tid}`}>{name}</option>)}
+            {teachers.map(([tid]) => (
+              <option key={tid} value={`t:${tid}`}>{alias(hideNames, dir.teachers, tid)}</option>
+            ))}
           </optgroup>
         </select>
         <span className="text-small text-pencil">

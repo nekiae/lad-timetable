@@ -3,6 +3,7 @@ import { Link, NavLink, Outlet, useParams } from "react-router-dom";
 
 import { api } from "./api";
 import { CommandPalette, Key, MOD } from "./CommandPalette";
+import { useHideNames } from "./hideNames";
 import { cx } from "./ui";
 
 // Шапка школы сверху, а не боковое меню: сетка на 24 класса шире любого
@@ -12,6 +13,9 @@ export function Shell() {
   const { id = "" } = useParams();
   const [name, setName] = useState("");
   const [palette, setPalette] = useState(false);
+  // Обезличивание одно на всё приложение: включил — фамилий нет нигде,
+  // куда бы завуч ни перешёл при показе посторонним (§8.4).
+  const [hideNames, setHideNames] = useHideNames();
 
   // ⌘K / Ctrl+K — поиск класса, учителя или раздела с любого экрана школы.
   useEffect(() => {
@@ -48,8 +52,14 @@ export function Shell() {
             <NavLink to={`/s/${id}/whatif`} className={tab}>Что если</NavLink>
             <NavLink to={`/s/${id}/substitutions`} className={tab}>Замены</NavLink>
           </nav>
+          <label className="ml-auto flex shrink-0 items-center gap-2 text-small text-pencil"
+                 title="Фамилии учителей заменяются на «Учитель 1», «Учитель 2» во всех разделах">
+            <input type="checkbox" className="accent-pen" checked={hideNames}
+                   onChange={(e) => setHideNames(e.target.checked)} />
+            Скрыть ФИО
+          </label>
           <button type="button" onClick={() => setPalette(true)}
-                  className="ml-auto hidden shrink-0 items-center gap-2 rounded border border-rule bg-paper px-3 py-1.5 text-small text-pencil transition-colors duration-150 hover:border-pencil lg:inline-flex">
+                  className="hidden shrink-0 items-center gap-2 rounded border border-rule bg-paper px-3 py-1.5 text-small text-pencil transition-colors duration-150 hover:border-pencil lg:inline-flex">
             Найти класс или учителя <Key>{MOD} K</Key>
           </button>
         </div>

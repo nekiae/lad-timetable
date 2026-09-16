@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import { api, saveBlob, type Directory, type LessonDTO, type Schedule } from "../api";
+import { useHideNames } from "../hideNames";
 import { Button, EmptyState, Segmented, cx } from "../ui";
 
 type By = "class" | "teacher";
@@ -15,7 +16,9 @@ export function PrintPage() {
   const [params, setParams] = useSearchParams();
   const by: By = params.get("by") === "teacher" ? "teacher" : "class";
   const [schedule, setSchedule] = useState<Schedule | null>();
-  const [hideNames, setHideNames] = useState(false);
+  // Печать открывается вне общей шапки, поэтому переключатель остаётся на самой
+  // странице, но состояние — общее: выбор, сделанный в приложении, здесь виден.
+  const [hideNames, setHideNames] = useHideNames();
   const [exporting, setExporting] = useState<"pdf" | "xlsx" | null>(null);
   const [error, setError] = useState<string>();
 

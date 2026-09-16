@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import { api, type Directory, type LessonDTO, type Logic, type Progress, type Report, type Schedule, type ScheduleVersion,
          type Verdict } from "../api";
+import { useHideNames } from "../hideNames";
 import { Button, ButtonLink, EmptyState, Notice, Panel, Reasons, cx, inputClass, when } from "../ui";
 import { Key, MOD } from "../CommandPalette";
 import { DifficultyMap } from "./DifficultyMap";
@@ -94,7 +95,7 @@ export function SchedulePage() {
   // клетку тоже показывается, но заголовком «Сюда нельзя», а не «поменялись».
   const [last, setLast] = useState<{ verdict: Verdict; applied: boolean;
                                      target?: { index: number; day: number; period: number } } | null>(null);
-  const [hideNames, setHideNames] = useState(false);
+  const [hideNames] = useHideNames();
   const [saved, setSaved] = useState<"idle" | "saving" | "saved">("idle");
   // Закреплённые уроки — ПОЗИЦИИ (урок + клетка), а не номера в массиве:
   // номера меняются после каждой пересборки, а закрепление должно пережить её.
@@ -628,11 +629,6 @@ export function SchedulePage() {
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <label className="mr-2 flex cursor-pointer items-center gap-2 text-small">
-            <input type="checkbox" className="accent-pen" checked={hideNames}
-                   onChange={(e) => setHideNames(e.target.checked)} />
-            Скрыть ФИО учителей
-          </label>
           <button type="button" aria-pressed={showDifficulty} onClick={toggleDifficulty}
                   className={cx("inline-flex items-center rounded border px-4 py-2 font-medium transition-colors duration-150",
                                 showDifficulty ? "border-pen bg-pen-soft text-pen" : "border-rule bg-sheet hover:border-pencil")}>
