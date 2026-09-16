@@ -302,6 +302,7 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 export const api = {
   schools: () =>
     call<{ id: string; name: string; updated_at: number; schedule_at: number | null }[]>("GET", "/schools"),
+  deleteSchool: (id: string) => call<{ ok: boolean }>("DELETE", `/schools/${id}`),
   createSchool: (name: string, fromExample: boolean) =>
     call<{ id: string }>("POST", "/schools", { name, from_example: fromExample }),
   school: (id: string) => call<{ id: string; revision: number; doc: Doc }>("GET", `/schools/${id}`),
@@ -339,7 +340,7 @@ export const api = {
     }>("GET", "/rules"),
   solve: (id: string, body: { budget: number; preset: string; rules?: Record<string, string>;
                                prefs?: Record<string, number>; pinned?: LessonDTO[]; hint?: LessonDTO[];
-                               keep?: boolean }) =>
+                               keep?: boolean; settle?: number }) =>
     call<{ job_id: string }>("POST", `/schools/${id}/solve`, body),
   stop: (jobId: string) => call<{ ok: boolean }>("POST", `/jobs/${jobId}/stop`),
   latest: (id: string) => call<Schedule>("GET", `/schools/${id}/schedules/latest`),
@@ -413,7 +414,8 @@ export const api = {
   tarifPreview: (id: string, body: TarifBody) => call<TarifPreview>("POST", `/schools/${id}/tarif/preview`, body),
   tarifApply: (id: string, body: TarifBody) =>
     call<Saved & { tarif: { rows: number; classes: string[]; subjects: string[]; teachers: string[]; load_rows: number;
-                            skipped_total: number; split: string[] } }>("POST", `/schools/${id}/tarif/apply`, body),
+                            skipped_total: number; split: string[];
+                            checks: { text: string; step: string }[] } }>("POST", `/schools/${id}/tarif/apply`, body),
   excelGuide: (id: string) => call<ExcelGuideDTO>("GET", `/schools/${id}/data/guide`),
   importData: (id: string, file: File) =>
     fetch(`/api/schools/${id}/data.xlsx`, { method: "POST", body: file }).then(async (res) => {

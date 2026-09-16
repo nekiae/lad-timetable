@@ -45,7 +45,7 @@ export function DataPage() {
   const [report, setReport] = useState<ImportReport>();
   const [showGuide, setShowGuide] = useState(false);
   const [showTarif, setShowTarif] = useState(false);
-  const [tarifDone, setTarifDone] = useState<string>();
+  const [tarifDone, setTarifDone] = useState<{ text: string; checks: { text: string; step: string }[] }>();
   const fileInput = useRef<HTMLInputElement>(null);
   const latest = useRef<Doc>();
   const timer = useRef<number>();
@@ -166,7 +166,7 @@ export function DataPage() {
           {/* Загрузка заменяет только листы, которые есть в файле; прежние данные
               остаются в ревизиях школы. */}
           <Button onClick={() => fileInput.current?.click()}>Загрузить из Excel</Button>
-          <input ref={fileInput} type="file" accept=".xlsx" className="hidden"
+          <input ref={fileInput} type="file" accept=".xlsx,.xls" className="hidden"
                  onChange={async (e) => {
                    const file = e.target.files?.[0];
                    e.target.value = "";
@@ -182,11 +182,29 @@ export function DataPage() {
 
       {showTarif && (
         <TarifImport id={id} run={run} onClose={() => setShowTarif(false)}
-                     onDone={(text) => { setShowTarif(false); setTarifDone(text); }} />
+                     onDone={(text, checks) => { setShowTarif(false); setTarifDone({ text, checks }); }} />
       )}
       {tarifDone && (
-        <Notice tone="ok" className="mt-4" title="Нагрузка загружена">
-          <p>{tarifDone}</p>
+        <Notice tone={tarifDone.checks.length ? "worse" : "ok"} className="mt-4" title="Нагрузка загружена">
+          <p>{tarifDone.text}</p>
+          {/* Что система заполнила за школу догадкой — проверить сразу, а не когда
+              расписание не сложится. */}
+          {tarifDone.checks.length > 0 && (
+            <>
+              <p className="mt-3 font-semibold">Что проверить</p>
+              <ul className="mt-1 space-y-1">
+                {tarifDone.checks.map((check) => (
+                  <li key={check.text} className="flex flex-wrap items-baseline gap-x-3">
+                    <span>{check.text}</span>
+                    <button type="button" className="text-pen underline-offset-4 hover:underline"
+                            onClick={() => go(check.step as StepKey)}>
+                      Открыть шаг
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
           <button type="button" className="mt-1 text-pen underline-offset-4 hover:underline" onClick={() => setTarifDone(undefined)}>
             Скрыть
           </button>

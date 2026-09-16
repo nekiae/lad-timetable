@@ -170,6 +170,10 @@ def evaluate_move(school: School, lessons: list[Lesson], index: int, target: Slo
     elif delta_days < 0:
         verdict.gains.append(Reason("У учителя освободится целый день"))
 
+    # Первой — причина с пунктом нормы: её завуч и назовёт учителю. Совпадение
+    # учителей в одном часе — тоже «нельзя», но ссылки на документ у него нет,
+    # и в прогоне показа 15.09.2026 оно стояло первым, заслоняя п. 94 ССЭТ.
+    verdict.blocking.sort(key=lambda reason: reason.source is None)
     if verdict.blocking:
         verdict.level = "no"
     elif verdict.costs:

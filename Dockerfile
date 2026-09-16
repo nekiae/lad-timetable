@@ -12,7 +12,7 @@ FROM python:3.13-slim
 WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir ortools==9.15.6755 pandas==3.0.5 openpyxl==3.1.5 \
-        fastapi==0.115.14 "uvicorn[standard]==0.32.1" fpdf2==2.8.8
+        fastapi==0.115.14 "uvicorn[standard]==0.32.1" fpdf2==2.8.8 xlrd==2.0.2
 COPY src/ src/
 COPY server/ server/
 COPY data/sanpin_by.json data/plan_75.json data/school.json data/

@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from .entry import _open, _save
 
+from lad.tables import load_plan  # noqa: E402
 from lad.tarif_import import apply, extract, inspect, read_book  # noqa: E402
 
 router = APIRouter(prefix="/api/schools/{school_id}/tarif")
@@ -72,4 +73,37 @@ def apply_file(school_id: str, body: TarifBody) -> dict:
         raise HTTPException(422, "Из файла не получилось ни одной строки нагрузки — проверьте, какие колонки выбраны")
     tables, created = apply(tables, result["records"], "add" if body.mode == "add" else "replace")
     return _save(school_id, doc, tables, tarif={"rows": len(result["records"]), **created,
-                                                "skipped_total": len(result["skipped"]), "split": result["split"]})
+                                                "skipped_total": len(result["skipped"]), "split": result["split"],
+                                                "checks": _checks(tables, created, result)})
+
+
+def _checks(tables, created: dict, result: dict) -> list[dict]:
+    """Что проверить после импорта: всё, что система заполнила за школу догадкой.
+
+    Импорт заводит недостающее сам, но часть значений неоткуда взять — они
+    стоят по умолчанию. Завуч должен увидеть это сразу, а не когда расписание
+    не сложится: у предмета не тот кабинет, у учителя нет методического дня.
+    """
+    plan = {s["name"] for s in load_plan().get("subjects", [])}
+    checks = []
+    if not len(tables["rooms"]):
+        checks.append({"text": "Кабинетов в данных нет — без них расписание не составится", "step": "rooms"})
+    guessed = [s for s in created["subjects"] if s not in plan]
+    if guessed:
+        checks.append({"text": f"Кабинет поставлен «обычный» наугад — этих предметов нет в учебном плане: {', '.join(guessed)}",
+                       "step": "subjects"})
+    if created["teachers"]:
+        checks.append({"text": f"Новых учителей: {len(created['teachers'])} — методический день и свой кабинет "
+                               "не указаны", "step": "teachers"})
+    if created["classes"]:
+        checks.append({"text": f"Новые классы {', '.join(created['classes'])}: учеников по умолчанию 24",
+                       "step": "classes"})
+    if result["split"]:
+        checks.append({"text": "Деление на подгруппы проставлено по двум учителям: " + "; ".join(result["split"][:4])
+                               + (" и другие" if len(result["split"]) > 4 else ""), "step": "load"})
+    if result["no_teacher"]:
+        checks.append({"text": f"Строк нагрузки без учителя: {result['no_teacher']}", "step": "load"})
+    if result["skipped"]:
+        checks.append({"text": f"Пропущено строк файла: {len(result['skipped'])} — если это не итоги, внесите "
+                               "их вручную", "step": "load"})
+    return checks

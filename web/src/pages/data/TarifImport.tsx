@@ -43,7 +43,7 @@ export function TarifImport({ id, run, onClose, onDone }: {
   id: string;
   run: <T extends { doc: Doc }>(action: () => Promise<T>) => Promise<T | undefined>;
   onClose: () => void;
-  onDone: (text: string) => void;
+  onDone: (text: string, checks: { text: string; step: string }[]) => void;
 }) {
   const [file, setFile] = useState<{ name: string; data: string } | null>(null);
   const [book, setBook] = useState<TarifInspect>();
@@ -122,8 +122,7 @@ export function TarifImport({ id, run, onClose, onDone }: {
       t.subjects.length ? `Заведены предметы: ${t.subjects.join(", ")}.` : "",
       t.teachers.length ? `Заведено учителей: ${t.teachers.length}.` : "",
       t.split.length ? `Деление на подгруппы: ${t.split.length}.` : "",
-      "Проверьте кабинеты предметов и методические дни учителей на шагах слева.",
-    ].filter(Boolean).join(" "));
+    ].filter(Boolean).join(" "), t.checks);
   }
 
   const shownRows = settings ? rows.slice(Math.max(0, settings.header_row - 2), settings.header_row + 9) : [];
@@ -155,7 +154,7 @@ export function TarifImport({ id, run, onClose, onDone }: {
         <Button variant={file ? "quiet" : "primary"} disabled={busy === "read"} onClick={() => input.current?.click()}>
           {busy === "read" ? "Читаю файл…" : file ? "Выбрать другой файл" : "Выбрать файл Excel"}
         </Button>
-        <input ref={input} type="file" accept=".xlsx" className="hidden" aria-label="Файл таблицы нагрузки"
+        <input ref={input} type="file" accept=".xlsx,.xls" className="hidden" aria-label="Файл таблицы нагрузки"
                onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) open(f); }} />
         {file && <span className="text-small">{file.name}</span>}
         {book && book.sheets.length > 1 && (

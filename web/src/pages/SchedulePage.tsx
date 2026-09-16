@@ -417,6 +417,7 @@ export function SchedulePage() {
     try {
       const { job_id } = await api.solve(id, {
         budget: REBUILD_SECONDS,
+        settle: REBUILD_SETTLE, // сетка перестала улучшаться — не ждать все 40 секунд
         preset: typeof settings.preset === "string" ? settings.preset : "Поровну",
         rules: (settings.rules as Record<string, string>) ?? {},
         prefs: (settings.prefs as Record<string, number>) ?? {},
@@ -1136,6 +1137,11 @@ function LogicCard({ logic, classes, id }: { logic: Logic; classes: number; id: 
 }
 
 const REBUILD_SECONDS = 40;
+// Сколько секунд без ЗАМЕТНОГО улучшения считать «улучшать нечего». Замер
+// 16.09.2026 на пересборке вокруг закреплённого урока (2 сида): без остановки
+// всегда 40 с и окон 136/123; при 8 с — 31 и 28 с, окон 134/129; при 5 с быстрее
+// (14 и 30 с), но окон стабильно больше (138/138). Нарушений норм нигде нет.
+const REBUILD_SETTLE = 8;
 
 const lessonKey = (l: LessonDTO) => `${l.group_id}|${l.subject_id}|${l.teacher_id}`;
 const cellKey = (classId: string, day: number, period: number) => `${classId}|${day}|${period}`;
@@ -1244,7 +1250,7 @@ function RebuildProgress({ rebuild, now, onStop }: {
              style={{ width: `${Math.min(100, (elapsed / REBUILD_SECONDS) * 100)}%` }} />
       </div>
       <p className="mt-2 text-pencil">
-        {Math.round(elapsed)} с из {REBUILD_SECONDS}.{" "}
+        {Math.round(elapsed)} с, не дольше {REBUILD_SECONDS}.{" "}
         {!found ? "Ищу законную сетку вокруг закреплённых…"
           : p!.phase === "polish" ? "Нормы закрыты, улучшаю удобство." : "Закрываю нормы."}
       </p>

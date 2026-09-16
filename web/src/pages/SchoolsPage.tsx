@@ -15,6 +15,14 @@ import { Button, ButtonLink, cx, when } from "../ui";
 export function SchoolsPage() {
   const [schools, setSchools] = useState<Awaited<ReturnType<typeof api.schools>>>();
   const [busy, setBusy] = useState(false);
+  // Удаление — в два щелчка: школа уходит со всеми данными, расписаниями и журналом.
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+
+  async function remove(schoolId: string) {
+    setConfirmDelete(null);
+    await api.deleteSchool(schoolId);
+    setSchools((list) => list?.filter((s) => s.id !== schoolId));
+  }
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -107,7 +115,25 @@ export function SchoolsPage() {
                       {when(s.updated_at)}.
                     </span>
                   </Link>
-                  <span className="flex shrink-0 flex-wrap gap-2">
+                  <span className="flex shrink-0 flex-wrap items-center gap-3">
+                    {confirmDelete === s.id ? (
+                      <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-small">
+                        <span className="text-no">Удалить со всеми данными, расписаниями и журналом замен? Вернуть нельзя.</span>
+                        <button type="button" className="font-medium text-no underline-offset-4 hover:underline"
+                                onClick={() => remove(s.id)}>
+                          Да, удалить
+                        </button>
+                        <button type="button" className="text-pencil underline-offset-4 hover:underline"
+                                onClick={() => setConfirmDelete(null)}>
+                          Отмена
+                        </button>
+                      </span>
+                    ) : (
+                      <button type="button" className="text-small text-pencil underline-offset-4 hover:text-no hover:underline"
+                              onClick={() => setConfirmDelete(s.id)}>
+                        Удалить
+                      </button>
+                    )}
                     {s.schedule_at
                       ? <ButtonLink to={`/s/${s.id}/schedule`}>Открыть расписание</ButtonLink>
                       : <ButtonLink to={`/s/${s.id}/data`}>Продолжить ввод</ButtonLink>}

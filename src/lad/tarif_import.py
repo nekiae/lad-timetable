@@ -118,12 +118,39 @@ def match_subject(name: str, known: list[str]) -> str | None:
 
 # ---------------------------------------------------------------- чтение и догадка
 
+XLS_SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"  # старый двоичный Excel 97–2003
+
+
+def _read_xls(data: bytes) -> dict[str, list[list[str]]]:
+    """Старый .xls — в таком виде тарификация часто и лежит в школе."""
+    import xlrd
+    try:
+        book = xlrd.open_workbook(file_contents=data, formatting_info=True)
+    except Exception as error:  # noqa: BLE001
+        raise ValueError("Файл .xls не читается. Откройте его в Excel и сохраните как «Книга Excel (.xlsx)».") from error
+    sheets = {}
+    for sheet in book.sheets():
+        merged = {}
+        for row_lo, row_hi, col_lo, _ in sheet.merged_cells:  # только вниз по первой колонке, как в .xlsx
+            for r in range(row_lo, row_hi):
+                merged[r, col_lo] = sheet.cell_value(row_lo, col_lo)
+        rows = [[_cell(merged.get((r, c), sheet.cell_value(r, c))) for c in range(sheet.ncols)]
+                for r in range(min(sheet.nrows, 3000))]
+        while rows and not any(rows[-1]):
+            rows.pop()
+        width = max((max((i + 1 for i, v in enumerate(row) if v), default=0) for row in rows), default=0)
+        sheets[sheet.name] = [(row + [""] * width)[:width] for row in rows]
+    return sheets
+
+
 def read_book(data: bytes) -> dict[str, list[list[str]]]:
+    if data[:8] == XLS_SIGNATURE:
+        return _read_xls(data)
     try:
         book = load_workbook(io.BytesIO(data), data_only=True)
     except Exception as error:  # noqa: BLE001
-        raise ValueError("Файл не читается как Excel (.xlsx). Если это старый .xls — откройте его в Excel "
-                         "и сохраните как «Книга Excel (.xlsx)».") from error
+        raise ValueError("Файл не читается как Excel (.xlsx или .xls). Если это другой формат — откройте "
+                         "его в Excel и сохраните как «Книга Excel (.xlsx)».") from error
     sheets = {}
     for sheet in book.worksheets:
         merged = {}

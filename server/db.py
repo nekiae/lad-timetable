@@ -99,6 +99,14 @@ def create_school(doc: dict) -> str:
     return school_id
 
 
+def delete_school(school_id: str) -> bool:
+    """Школа целиком: данные со всеми ревизиями, расписания и журнал замен."""
+    with connect() as conn:
+        for table in ("substitutions", "schedules", "school_revisions"):
+            conn.execute(f"DELETE FROM {table} WHERE school_id = ?", (school_id,))
+        return conn.execute("DELETE FROM schools WHERE id = ?", (school_id,)).rowcount > 0
+
+
 def get_school(school_id: str) -> tuple[dict, int] | None:
     """Последняя ревизия документа школы и её номер."""
     with connect() as conn:

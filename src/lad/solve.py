@@ -1503,8 +1503,13 @@ def solve(
     ignore_rooms: bool = False,
     hint: list[Lesson] | None = None,
     stay: list[Lesson] | None = None,
+    settle: float | None = None,
 ) -> SolveResult:
     """Составить расписание. Всегда отдаёт сетку, если она в принципе существует.
+
+    `settle` — остановить этап раньше бюджета, если нормы уже на нуле, а лучшего
+    решения нет `settle` секунд. Пересборка вокруг закреплённых уроков иначе всегда
+    ждала все 40 секунд, хотя сетка переставала меняться намного раньше.
 
     `hint` — готовая сетка, от которой начать (пересборка вокруг закреплённых
     уроков на экране расписания): черновик стартует не с пустого места, и
@@ -1535,6 +1540,48 @@ def solve(
     ответ «существует ли расписание вообще».
     """
     rules = rules or Rules()
+
+    # Ранняя остановка по затишью: этап ведёт свой отсчёт — черновик и доводка
+    # сравнивают штрафы разного смысла, поэтому при смене этапа отсчёт с нуля.
+    # Просьба человека «Остановить» проверяется первой и остаётся главной.
+    user_stop = should_stop
+    settled = {"phase": None, "best": None, "at": time.monotonic(), "zero": False}
+    if settle:
+        user_progress = on_progress
+
+        def on_progress(progress, _user=user_progress):  # noqa: F811 — обёртка над колбэком
+            now = time.monotonic()
+            if progress.phase != settled["phase"]:
+                settled.update(phase=progress.phase, best=None, at=now)
+            # Улучшением считается ЗАМЕТНОЕ: не меньше 1% штрафа. Доводка почти
+            # непрерывно находит крошечные улучшения, и затишья не наступало
+            # никогда — замер 16.09.2026: все прогоны доигрывали бюджет до конца.
+            best = settled["best"]
+            if progress.penalty is not None and (best is None
+                                                 or progress.penalty <= best - max(1.0, abs(best) * 0.01)):
+                settled.update(best=progress.penalty, at=now)
+            # Ноль нарушений засчитывается, ТОЛЬКО если счётчик действительно
+            # пришёл. Значение по умолчанию ноль останавливало черновик, где
+            # такого счётчика нет: замер 16.09.2026 — settle=4 дал 24 нарушения
+            # норм и 659 переставленных уроков вместо 0 и 10.
+            norms = progress.metrics.get("Нарушений норм")
+            settled["zero"] = norms == 0 if norms is not None else (
+                bool(progress.norms) and sum(progress.norms.values()) == 0)
+            if _user:
+                _user(progress)
+
+        def should_stop():  # noqa: F811
+            if user_stop and user_stop():
+                return True
+            # ТОЛЬКО ДОВОДКА. Черновик всегда доигрывает свой бюджет: его счётчик
+            # нарушений — модельный и расходится с валидатором, и остановка по
+            # затишью ловила момент, когда модель считает, что нарушений нет.
+            # Замеры 16.09.2026: 25 и 43 нарушения в готовой сетке. У доводки же
+            # есть потолок нарушений, посчитанный валидатором по черновику, —
+            # раньше времени она закончится, но хуже черновика не станет.
+            return (settled["phase"] == "polish" and settled["zero"]
+                    and time.monotonic() - settled["at"] >= settle)
+
     common = dict(shift=shift, weights=weights, rules=rules, should_stop=should_stop,
                   pinned=pinned, params=params, ignore_rooms=ignore_rooms)
     if not optimize or not any(rules.is_hard(name) for name in RULE_TITLES):
@@ -1559,12 +1606,21 @@ def solve(
     if not draft.ok:
         return draft
 
-    if not (should_stop and should_stop()) and left() > 5:
+    # Отсчёт затишья доводки — с её первого решения, а не с черновика: иначе
+    # наблюдатель доводки остановил бы её через полсекунды, ещё без решений.
+    settled.update(phase=None, best=None, at=time.monotonic(), zero=False)
+    if not (user_stop and user_stop()) and left() > 5:
         # Доводка удобства — от черновика и с потолком «нарушений норм не больше,
         # чем в черновике». Без потолка доводка разменивала нормы на окна учителей:
         # замерено 14.09.2026 — прогон с 18 нарушениями на выходе. При нуле
         # в черновике потолок ноль — это те же запреты, но старт с законной сетки.
-        cap = draft.penalty if not TUNING["draft_comfort"] else _norm_violations(school, draft.lessons)
+        # Потолок — РЕАЛЬНОЕ число нарушений в черновике, посчитанное валидатором.
+        # Брать штраф черновика можно только когда он и есть «сумма нарушений».
+        # При пересборке (stay) штраф — смесь «нарушения × вес» и «сколько уроков
+        # сдвинулось», и потолок выходил огромным: доводка получала право наставить
+        # нарушений. Замер 16.09.2026: 43 нарушения и 711 переставленных уроков.
+        cap = (_norm_violations(school, draft.lessons)
+               if (stay or TUNING["draft_comfort"]) else draft.penalty)
         final = _solve(school, max_seconds=left(), optimize=True, soft_norms=True,
                        norm_cap=cap, hint=draft.lessons, on_progress=on_progress,
                        hierarchical=hierarchical, stay=stay,

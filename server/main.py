@@ -173,6 +173,14 @@ def revisions(school_id: str) -> list[dict]:
     return db.list_revisions(school_id)
 
 
+@app.delete("/api/schools/{school_id}")
+def delete_school(school_id: str) -> dict:
+    """Удалить школу со всеми данными. Необратимо — интерфейс спрашивает дважды."""
+    if not db.delete_school(school_id):
+        raise HTTPException(404, "Школа не найдена")
+    return {"ok": True}
+
+
 @app.get("/api/schools/{school_id}/check")
 def check_input(school_id: str) -> dict:
     """Проверки до запуска: ошибки ввода и предупреждения по нормам."""
@@ -222,6 +230,7 @@ class SolveRequest(BaseModel):
     pinned: list[dict] | None = None
     hint: list[dict] | None = None  # текущая сетка — старт пересборки вокруг закреплённых
     keep: bool = False  # беречь текущую сетку: штраф за каждый урок, ушедший со своего места
+    settle: float | None = None  # остановиться раньше, если нормы на нуле и улучшений нет столько секунд
 
 
 @app.post("/api/schools/{school_id}/solve")

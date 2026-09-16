@@ -232,7 +232,7 @@ async def import_xlsx(school_id: str, request: Request) -> dict:
     try:
         book = pd.read_excel(io.BytesIO(await request.body()), sheet_name=None, dtype=object)
     except Exception as error:  # noqa: BLE001 — любой нечитаемый файл это одна ошибка для человека
-        raise HTTPException(422, f"Файл не читается как Excel (.xlsx): {error}") from error
+        raise HTTPException(422, f"Файл не читается как Excel (.xlsx или .xls): {error}") from error
 
     by_name = {sheet.strip().lower(): name for sheet, name in SHEETS.items()}
     report = {"imported": {}, "unknown_sheets": [], "unknown_columns": {}, "missing_columns": {}}
