@@ -270,6 +270,16 @@ export function SchedulePage() {
   const teacherIndex = new Map(Object.keys(dir.teachers).map((t, i) => [t, i + 1]));
   const teacherName = (t: string) =>
     hideNames ? `Учитель ${teacherIndex.get(t)}` : surname(dir.teachers[t] ?? t);
+  // Причины приходят с сервера готовой строкой и называют учителя по фамилии.
+  // При скрытых именах их надо обезличить тоже: иначе сетка молчит, а панель
+  // «Сюда нельзя» всё равно печатает ФИО — и так оно попадает на показ и в PDF.
+  const mask = (text: string) => {
+    if (!hideNames) return text;
+    let out = text;
+    for (const [t, full] of Object.entries(dir.teachers))
+      if (full) out = out.split(full).join(`Учитель ${teacherIndex.get(t)}`);
+    return out;
+  };
   const selectedClasses = new Set(
     selected !== null ? dir.groups[lessons[selected].group_id]?.class_ids ?? [] : []);
   const seconds = schedule.meta.seconds ?? 0;
@@ -896,12 +906,12 @@ export function SchedulePage() {
           {/* Список не прячется при наведении: иначе наведение на пункт убирает
               сам пункт, и щелчок уходит в пустоту (найдено 14.09.2026). */}
           {selected !== null && heat && (
-            <Options heat={heat} dir={dir} lessons={lessons} current={`${lessons[selected].day}-${lessons[selected].period}`}
+            <Options heat={heat} dir={dir} lessons={lessons} mask={mask} current={`${lessons[selected].day}-${lessons[selected].period}`}
                      onPick={(day, period) => place(day, period)}
                      onHover={(key) => setPreview(key ? { key, verdict: heat[key] } : null)} />
           )}
           {shown && !rebuild && (
-            <VerdictCard verdict={shown.verdict} applied={shown.applied}
+            <VerdictCard verdict={shown.verdict} applied={shown.applied} mask={mask}
                          onRebuild={"target" in shown && shown.target
                            ? () => placeAndRebuild(shown.target!.index, shown.target!.day, shown.target!.period)
                            : undefined} />
@@ -1016,11 +1026,12 @@ const plural = (n: number, one: string, few: string, many: string) => {
 // Куда можно поставить — списком. На плотной сетке годных клеток обычно
 // три-пять из сорока, и искать их прокруткой по подсветке утомительно.
 // Сначала те, что улучшают сетку, потом нейтральные, потом «хуже».
-function Options({ heat, dir, lessons, current, onPick, onHover }: {
+function Options({ heat, dir, lessons, current, onPick, onHover, mask }: {
   heat: Record<string, Verdict>;
   dir: Directory;
   lessons: LessonDTO[];
   current: string;
+  mask: (text: string) => string;
   onPick: (day: number, period: number) => void;
   onHover: (key: string | null) => void;
 }) {
@@ -1051,8 +1062,8 @@ function Options({ heat, dir, lessons, current, onPick, onHover }: {
             {options.map(([key, v]) => {
               const [day, period] = key.split("-").map(Number);
               // У жёлтого варианта первым — чем он хуже: ради этого завуч и смотрит.
-              const note = (v.level === "worse" ? v.costs[0]?.text : v.gains[0]?.text)
-                ?? "ничего не изменится";
+              const note = mask((v.level === "worse" ? v.costs[0]?.text : v.gains[0]?.text)
+                ?? "ничего не изменится");
               return (
                 <li key={key}>
                   <button
@@ -1077,7 +1088,9 @@ function Options({ heat, dir, lessons, current, onPick, onHover }: {
   );
 }
 
-function VerdictCard({ verdict, applied, onRebuild }: { verdict: Verdict; applied: boolean; onRebuild?: () => void }) {
+function VerdictCard({ verdict, applied, onRebuild, mask }: {
+  verdict: Verdict; applied: boolean; onRebuild?: () => void; mask: (text: string) => string;
+}) {
   const title = applied
     ? "Уроки поменялись местами"
     : verdict.level === "no" ? "Сюда нельзя" : verdict.level === "worse" ? "Можно, но станет хуже" : "Можно";
@@ -1086,9 +1099,9 @@ function VerdictCard({ verdict, applied, onRebuild }: { verdict: Verdict; applie
     <div className={cx("rounded-lg border-2 bg-sheet p-4 text-small", tone)}>
       <p className={cx("text-heading", verdict.level === "no" && "text-no")}>{title}</p>
       <Reasons tone="no" items={verdict.blocking.map((r) => ({
-        text: r.text, source: r.source ? `${r.source} № 525` : null }))} />
-      <Reasons tone="worse" items={verdict.costs} />
-      <Reasons tone="ok" items={verdict.gains} />
+        text: mask(r.text), source: r.source ? `${r.source} № 525` : null }))} />
+      <Reasons tone="worse" items={verdict.costs.map((r) => ({ ...r, text: mask(r.text) }))} />
+      <Reasons tone="ok" items={verdict.gains.map((r) => ({ ...r, text: mask(r.text) }))} />
       {verdict.level === "ok" && !verdict.costs.length && !verdict.gains.length && !applied && (
         <p className="mt-1 text-pencil">Ничего не нарушится, метрики не изменятся.</p>
       )}
