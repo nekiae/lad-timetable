@@ -106,6 +106,40 @@ def unit_at(price: float) -> Unit:
     )
 
 
+# --- Модели, где платит не школа ---------------------------------------------
+# Школы в РБ бедные, и прецедент уже есть: базовые журналы schools.by для школ
+# бесплатны. Поэтому считаем не «сколько возьмём со школы», а «сколько стоит
+# задача тому, кто способен платить».
+
+# Рабочее время завуча — то, что мы экономим. Две недели ручной работы в год
+# (§2 CLAUDE.md). Ставка завуча ниже средней по стране; берём среднюю как
+# ВЕРХНЮЮ границу и помечаем допущение, точной цифры по должности нет.
+ZAVUCH_WEEKS = 2.0
+ZAVUCH_WAGE = AVG_WAGE  # UNVERIFIED: верхняя граница, реальная ставка ниже
+
+
+def problem_cost(schools: int = SCHOOLS_BY) -> float:
+    """Во сколько стране обходится ручное составление — в год, BYN."""
+    return schools * (ZAVUCH_WAGE / 4.33 * ZAVUCH_WEEKS)
+
+
+def self_build_cost(devs: int = 3, months: int = 12, salary: float = 5000) -> float:
+    """Во сколько ГИАЦ обойдётся написать модуль самим — только ФОТ.
+
+    Экспертизы по constraint solving у них нет, так что это нижняя оценка:
+    срок и риск сюда не заложены.
+    """
+    per_dev = salary + FSZN_EMPLOYER * min(salary, AVG_WAGE)
+    return per_dev * devs * months
+
+
+def runway(fixed: Fixed, months: int, budget_usd_month: float) -> tuple[float, float]:
+    """Сколько стоит продержаться N месяцев и хватает ли личного бюджета."""
+    need = fixed.yearly() / 12 * months
+    have = budget_usd_month * USD * months
+    return need, have
+
+
 def main() -> None:
     print(f"Курс {USD} BYN/$, БВ {BASE_UNIT:.0f} BYN, средняя зарплата {AVG_WAGE:.0f} BYN")
     print(f"Порог простой закупки: {SIMPLE_PROCUREMENT:.0f} BYN/год\n")
@@ -119,6 +153,26 @@ def main() -> None:
     print("\nПОСТОЯННЫЕ РАСХОДЫ")
     for name, f in TEAMS.items():
         print(f"  {name:<40} {f.yearly():9.0f} BYN/год  (${f.yearly() / USD:7.0f})")
+
+    print("\nГОРИЗОНТ 3 МЕСЯЦА, режим пилота при бюджете $30/мес")
+    need, have = runway(TEAMS["Режим пилота: школы бесплатно, юрлица нет"], 3, 30)
+    print(f"  нужно {need:.0f} BYN, личного бюджета {have:.0f} BYN — "
+          f"{'хватает' if have >= need else 'НЕ ХВАТАЕТ'}")
+
+    print("\nКОГДА ПЛАТИТ НЕ ШКОЛА")
+    problem = problem_cost()
+    build = self_build_cost()
+    print(f"  Ручное составление стоит стране {problem:>10.0f} BYN/год "
+          f"(${problem / USD:.0f}) — время завучей, UNVERIFIED")
+    print(f"  ГИАЦ написать модуль самим       {build:>10.0f} BYN "
+          f"(${build / USD:.0f}) — только ФОТ, год втроём")
+    for share in (0.3, 0.5):
+        print(f"    контракт за {share:.0%} от этой суммы:  {build * share:>8.0f} BYN "
+              f"(${build * share / USD:.0f})")
+    for per_school in (100, 150, 300):
+        total = per_school * SCHOOLS_BY
+        print(f"  Лицензия на страну по {per_school:>3} BYN/школа: {total:>9.0f} BYN/год "
+              f"(${total / USD:.0f}) — {total / problem:.0%} от стоимости проблемы")
 
     print("\nТОЧКА БЕЗУБЫТОЧНОСТИ, школ на подписке")
     print(f"  {'команда':<40} " + "  ".join(f"{p:>14}" for p in PRICES))
