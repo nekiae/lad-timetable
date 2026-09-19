@@ -1,0 +1,68 @@
+@import "tailwindcss";
+
+/* Токены ЛАД. Источник правды — docs/DESIGN.md §3–5. Лендинг наследует
+   палитру и шрифт продукта один в один; отличается только режим движения
+   (см. docs/DESIGN.md §9 «Лендинг»). */
+@theme {
+  --color-paper: #f6f8fb;
+  --color-sheet: #ffffff;
+  --color-rule: #dde4ef;
+  --color-ink: #1c2b4f;
+  --color-pencil: #5f6a84;
+
+  --color-pen: #2346b0;
+  --color-pen-strong: #1b3990;
+  --color-pen-soft: #e6ecfa;
+
+  --color-ok: #2f7d55;
+  --color-ok-soft: #e5f3eb;
+  --color-worse: #9a6200;
+  --color-worse-soft: #fbf1dc;
+  --color-no: #c9302c;
+  --color-no-soft: #fbeae9;
+
+  --font-sans: "IBM Plex Sans Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --radius-DEFAULT: 6px;
+  --radius-lg: 10px;
+}
+
+@layer base {
+  html {
+    /* Табличные цифры: метрики и номера уроков должны стоять столбиком. */
+    font-feature-settings: "tnum" 1;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-pen);
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  /* Узкая ширина той же семьи — только данные сетки (DESIGN.md §4).
+     Отдельный Plex Sans Condensed не годится: в нём нет кириллицы. */
+  .font-narrow {
+    font-stretch: 85%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
