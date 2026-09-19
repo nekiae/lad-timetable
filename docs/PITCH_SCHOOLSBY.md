@@ -10,6 +10,9 @@ schools.by на слайдах отсутствует — он только в �
 
 Опора: `docs/POSITIONING.md`, `docs/ECONOMICS.md`, цифры демо — `STATUS.md`.
 
+**Готовый дек:** https://claude.ai/artifact/LXt2UWPP3FEtdv8osQLsWC
+Восемь слайдов, реплики продублированы в заметках докладчика.
+
 Итого 180 секунд. Тайминг накопительный.
 
 ---
