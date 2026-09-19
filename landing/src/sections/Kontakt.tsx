@@ -1,7 +1,7 @@
 export function Kontakt() {
   return (
     <section className="tetrad pole">
-      <div className="mx-auto max-w-[1400px] px-4 py-20 md:px-8 md:py-32">
+      <div className="mx-auto max-w-[1400px] px-4 py-16 md:px-8 md:py-32">
       <div className="mx-auto max-w-[44ch] text-center">
         <h2 className="text-3xl font-semibold leading-tight tracking-[-0.02em] text-ink md:text-4xl">
           Покажем на вашей школе

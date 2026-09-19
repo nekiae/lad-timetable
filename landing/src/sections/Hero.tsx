@@ -3,8 +3,8 @@ import { ScheduleGrid } from "@/components/ScheduleGrid";
 export function Hero() {
   return (
     <section className="tetrad pole">
-      <div className="mx-auto max-w-[1400px] px-4 pt-14 pb-20 md:px-8 md:pt-20 md:pb-28">
-        <div className="grid items-center gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:gap-16">
+      <div className="mx-auto max-w-[1400px] px-4 pt-8 pb-14 md:px-8 md:pt-20 md:pb-28">
+        <div className="grid items-center gap-7 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:gap-16">
           <div>
             {/* Перенос задан вручную: иначе заголовок расползается на четыре
                 строки и зачёркивание теряется в середине. */}
@@ -13,11 +13,11 @@ export function Hero() {
               за <span className="zacherknuto text-pencil">две недели</span>{" "}
               секунды
             </h1>
-            <p className="mt-5 max-w-[46ch] text-[17px] leading-relaxed text-pencil sm:mt-6 sm:text-lg">
+            <p className="mt-4 max-w-[46ch] text-[17px] leading-relaxed text-pencil sm:mt-6 sm:text-lg">
               Система ставит уроки с учётом санитарных норм Беларуси и объясняет
               каждое «нельзя», в которое упирается завуч.
             </p>
-            <div className="mt-8 flex flex-col items-stretch gap-3 sm:mt-10 sm:flex-row sm:items-center">
+            <div className="mt-7 flex flex-col items-stretch gap-3 sm:mt-10 sm:flex-row sm:items-center">
               <a
                 href="https://t.me/nekivlad"
                 className="rounded bg-pen px-5 py-3 text-center text-[15px] font-semibold text-white transition-transform duration-150 hover:bg-pen-strong active:translate-y-px"
@@ -33,11 +33,11 @@ export function Hero() {
             </div>
           </div>
 
-          <div className="relative max-h-[420px] overflow-hidden lg:max-h-[560px]">
+          <div className="relative max-h-[260px] overflow-hidden sm:max-h-[420px] lg:max-h-[560px]">
             <ScheduleGrid compact settle />
             {/* Сетка в герое обрезается снизу: она иллюстрация, а не таблица
                 для чтения. Полный размер живёт в секции сборки. */}
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-paper to-transparent" />
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-paper to-transparent" />
           </div>
         </div>
       </div>

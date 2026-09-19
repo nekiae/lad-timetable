@@ -1,6 +1,6 @@
 export function Kontur() {
   return (
-    <section className="border-y border-rule bg-sheet py-20 md:py-28">
+    <section className="border-y border-rule bg-sheet py-14 md:py-28">
       <div className="mx-auto max-w-[1400px] px-4 md:px-8">
         <h2 className="max-w-[18ch] text-3xl font-semibold leading-tight tracking-[-0.02em] text-ink md:text-4xl">
           Ставится внутри вашего контура
@@ -9,12 +9,12 @@ export function Kontur() {
         {/* Схема потока данных. Единственная графика на странице, и она
             несёт содержание: видно, что за пунктирную рамку ничего
             не выходит. */}
-        <div className="mt-10 rounded-lg border border-dashed border-pen/45 p-4 sm:p-6 md:mt-12 md:p-8">
+        <div className="mt-7 rounded-lg border border-dashed border-pen/45 p-4 sm:p-6 md:mt-12 md:p-8">
           <div className="text-[13px] font-medium text-pen">
             Контур школы или ведомства
           </div>
 
-          <div className="mt-5 grid items-stretch gap-3 md:grid-cols-[minmax(0,1fr)_28px_minmax(0,1.1fr)_28px_minmax(0,1fr)] md:gap-4">
+          <div className="mt-4 grid items-stretch gap-2 md:gap-4 md:grid-cols-[minmax(0,1fr)_28px_minmax(0,1.1fr)_28px_minmax(0,1fr)]">
             <Blok title="Тарификация" body="Классы, кабинеты, учителя, часы" />
             <Strelka />
             <Blok
@@ -26,14 +26,14 @@ export function Kontur() {
             <Blok title="Готовая сетка" body="Расписание, замены, выгрузка" />
           </div>
 
-          <p className="mt-6 text-[15px] leading-relaxed text-pencil">
+          <p className="mt-5 text-[15px] leading-relaxed text-pencil">
             Наружу не уходит ничего. Данные учеников системе не нужны ни в каком
             виде: фамилий, оценок и личных дел она не запрашивает и хранить их
             не может.
           </p>
         </div>
 
-        <div className="mt-10 grid gap-8 md:grid-cols-2 md:gap-16">
+        <div className="mt-8 grid gap-6 md:grid-cols-2 md:gap-16">
           <Point title="Работает на ваших серверах">
             Не облачный сервис на чужой стороне. Разворачивается внутри школьной
             или ведомственной инфраструктуры.

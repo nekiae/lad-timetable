@@ -23,14 +23,14 @@ export function Problema() {
   const sobrano = useInView(ref, { once: true, amount: 0.55 });
 
   return (
-    <section className="border-t border-rule bg-sheet py-20 md:py-28">
+    <section className="border-t border-rule bg-sheet py-14 md:py-28">
       <div className="mx-auto max-w-[1400px] px-4 md:px-8">
         <p className="max-w-[20ch] text-3xl font-semibold leading-[1.15] tracking-[-0.02em] text-ink md:text-[44px] md:leading-[1.1]">
           В сентябре расписание ещё переставляют.
         </p>
 
-        <div ref={ref} className="mt-12 overflow-hidden">
-          <ul className="space-y-2.5 md:space-y-3">
+        <div ref={ref} className="mt-8 overflow-hidden md:mt-12">
+          <ul className="space-y-2 md:space-y-3">
             {repliki.map((r) => (
               <li
                 key={r.text}
@@ -51,7 +51,7 @@ export function Problema() {
           </ul>
         </div>
 
-        <div className="mt-12 grid gap-8 md:grid-cols-2 md:gap-16 lg:max-w-[70%]">
+        <div className="mt-9 grid gap-6 md:grid-cols-2 md:gap-16 lg:max-w-[70%]">
           <p className="text-[17px] leading-relaxed text-pencil">
             Всё это надо совместить одновременно, и половины этих условий нет ни
             в одной таблице. Меняешь один урок — рассыпаются три других.

@@ -11,8 +11,8 @@ const DURATION_MS = 2400;
 const STEP_MS = 40;
 
 export function Sborka() {
-  const ref = useRef<HTMLDivElement>(null);
-  const inView = useInView(ref, { once: true, amount: 0.15 });
+  const setkaRef = useRef<HTMLDivElement>(null);
+  const inView = useInView(setkaRef, { once: true, amount: 0.04 });
   const reduce = useReducedMotion();
 
   const [progress, setProgress] = useState(0);
@@ -55,8 +55,7 @@ export function Sborka() {
   return (
     <section
       id="sborka"
-      ref={ref}
-      className="scroll-mt-16 border-y border-rule bg-sheet py-20 md:py-28"
+      className="scroll-mt-16 border-y border-rule bg-sheet py-14 md:py-28"
     >
       <div className="mx-auto max-w-[1400px] px-4 md:px-8">
         <div>
@@ -64,27 +63,28 @@ export function Sborka() {
             Так это выглядит
           </h2>
           <p className="mt-4 max-w-[52ch] text-[17px] leading-relaxed text-pencil">
-            Завуч отдаёт тарификацию. Дальше уроки расставляет солвер: он держит
-            в голове все ограничения сразу и не откатывается вручную.
+            Завуч отдаёт тарификацию. Дальше уроки расставляет солвер, который
+            держит все ограничения сразу.
           </p>
         </div>
 
-        {/* На телефоне панель стоит над сеткой: иначе пока идёт сборка,
-            секундомер остаётся за нижним краем экрана и весь смысл секции
-            проходит мимо. На широком экране она уходит вправо. */}
-        <div className="mt-10 grid gap-8 lg:grid-cols-[minmax(0,1fr)_280px] lg:gap-12">
-          <div className="order-1 lg:order-2 lg:pt-1">
+        {/* На телефоне порядок такой: показания, сетка, управление. Над
+            сеткой должно остаться только то, что меняется на глазах, иначе
+            кнопка и подпись выдавливают сетку за нижний край и человек
+            не видит, как она собирается. На широком экране всё это
+            возвращается в правую колонку. */}
+        <div className="mt-8 grid gap-6 md:mt-10 lg:grid-cols-[minmax(0,1fr)_280px] lg:grid-rows-[auto_1fr] lg:gap-x-12 lg:gap-y-8">
+          <div className="order-1 lg:order-none lg:col-start-2 lg:row-start-1 lg:pt-1">
             <div className="border-t-2 border-ink pt-4">
               <div className="text-[13px] text-pencil">Прошло</div>
               <div className="mt-1 flex items-baseline gap-2">
-                <span className="text-[64px] font-semibold leading-[0.9] tracking-[-0.03em] text-ink tabular-nums md:text-[76px]">
+                <span className="text-[56px] font-semibold leading-[0.9] tracking-[-0.03em] text-ink tabular-nums sm:text-[64px] md:text-[76px]">
                   {seconds}
                 </span>
                 <span className="text-[22px] font-medium text-pencil">с</span>
               </div>
             </div>
-
-            <div className="mt-7 grid grid-cols-2 gap-x-6 gap-y-5 lg:grid-cols-1 lg:gap-6">
+            <div className="mt-6 grid grid-cols-2 gap-x-6 gap-y-5 lg:grid-cols-1 lg:gap-6">
               <Readout
                 label="Уроков поставлено"
                 value={`${placed}`}
@@ -96,23 +96,29 @@ export function Sborka() {
                 note={done ? "проверено валидатором" : ""}
                 tone={done ? "ok" : "plain"}
               />
-              <button
-                type="button"
-                onClick={run}
-                disabled={running}
-                className="col-span-2 w-full rounded border border-rule bg-paper px-4 py-2.5 text-[15px] font-medium text-ink transition-colors duration-150 hover:border-pen hover:text-pen disabled:cursor-default disabled:text-pencil disabled:hover:border-rule lg:col-span-1 lg:w-fit"
-              >
-                {running ? "Составляю…" : "Составить заново"}
-              </button>
-              <p className="col-span-2 text-[13px] leading-5 text-pencil lg:col-span-1">
-                Это часть сетки. В гимназии 28 классов и 980 уроков в неделю, и
-                они ставятся в тот же проход.
-              </p>
             </div>
           </div>
 
-          <div className="order-2 lg:order-1">
+          <div
+            ref={setkaRef}
+            className="order-2 lg:order-none lg:col-start-1 lg:row-start-1 lg:row-span-2"
+          >
             <ScheduleGrid progress={progress} interactive />
+          </div>
+
+          <div className="order-3 lg:order-none lg:col-start-2 lg:row-start-2 lg:self-start">
+            <button
+              type="button"
+              onClick={run}
+              disabled={running}
+              className="w-full rounded border border-rule bg-paper px-4 py-2.5 text-[15px] font-medium text-ink transition-colors duration-150 hover:border-pen hover:text-pen disabled:cursor-default disabled:text-pencil disabled:hover:border-rule lg:w-fit"
+            >
+              {running ? "Составляю…" : "Составить заново"}
+            </button>
+            <p className="mt-4 text-[13px] leading-5 text-pencil">
+              Это часть сетки. В гимназии 28 классов и 980 уроков в неделю, и
+              они ставятся в тот же проход.
+            </p>
           </div>
         </div>
       </div>

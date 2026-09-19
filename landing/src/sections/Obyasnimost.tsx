@@ -1,18 +1,18 @@
 export function Obyasnimost() {
   return (
     <section className="tetrad pole">
-      <div className="mx-auto max-w-[1400px] px-4 py-20 md:px-8 md:py-28">
+      <div className="mx-auto max-w-[1400px] px-4 py-14 md:px-8 md:py-28">
       <div className="mx-auto max-w-[62ch]">
         <h2 className="text-3xl font-semibold leading-tight tracking-[-0.02em] text-ink md:text-4xl">
           Иногда правильный ответ — «так нельзя»
         </h2>
-        <p className="mt-5 text-[17px] leading-relaxed text-pencil">
+        <p className="mt-4 text-[17px] leading-relaxed text-pencil">
           На школе в 24 класса система не смогла выполнить одну норму и вместо
           молчаливого нарушения написала, почему. Это её настоящий ответ, слово
           в слово:
         </p>
 
-        <figure className="mt-8 border-l-2 border-no bg-no-soft/60 py-5 pl-6 pr-5">
+        <figure className="mt-7 border-l-2 border-no bg-no-soft/60 py-4 pl-5 pr-4 sm:py-5 sm:pl-6 sm:pr-5">
           <blockquote className="text-[17px] leading-relaxed text-ink">
             Физкультуры в школе 72 часа в неделю, а норма «не два дня подряд»
             (п. 94 ССЭТ № 525) оставляет 3 дня из 5. За эти дни спортзал вмещает
@@ -26,7 +26,7 @@ export function Obyasnimost() {
           </blockquote>
         </figure>
 
-        <p className="mt-8 text-[17px] leading-relaxed text-pencil">
+        <p className="mt-7 text-[17px] leading-relaxed text-pencil">
           Пообещать «ноль нарушений» умеет любая программа. Разобрать, что
           школе физически не хватает спортзала на 24 урока, и предложить три
           выхода — не умеет никто. Это же и оружие завуча в разговоре с

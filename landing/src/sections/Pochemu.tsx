@@ -35,28 +35,28 @@ const reasons = [
 export function Pochemu() {
   return (
     <section className="tetrad pole">
-      <div className="mx-auto max-w-[1400px] px-4 py-20 md:px-8 md:py-28">
+      <div className="mx-auto max-w-[1400px] px-4 py-14 md:px-8 md:py-28">
         <h2 className="max-w-[16ch] text-3xl font-semibold leading-tight tracking-[-0.02em] text-ink md:text-4xl">
           Почему это до сих пор делают руками
         </h2>
-        <dl className="mt-12 space-y-10 md:mt-14 md:space-y-12">
+        <dl className="mt-8 space-y-7 md:mt-14 md:space-y-12">
           {reasons.map((r) => (
             <div
               key={r.title}
-              className="grid gap-x-6 gap-y-2 md:grid-cols-[88px_minmax(0,1fr)]"
+              className="grid gap-x-6 gap-y-1 md:grid-cols-[88px_minmax(0,1fr)]"
             >
               <div
                 aria-hidden="true"
-                className="text-[15px] font-medium leading-6 text-no md:pt-0.5 md:text-right"
+                className="text-[13px] font-medium leading-5 text-no md:pt-0.5 md:text-[15px] md:leading-6 md:text-right"
                 style={{ transform: "rotate(-2deg)" }}
               >
                 {r.mark}
               </div>
               <div>
-                <dt className="text-[19px] font-semibold leading-7 text-ink md:text-[21px]">
+                <dt className="text-[18px] font-semibold leading-6 text-ink md:text-[21px] md:leading-7">
                   {r.title}
                 </dt>
-                <dd className="mt-2 max-w-[60ch] text-[15px] leading-relaxed text-pencil md:text-[16px]">
+                <dd className="mt-1.5 max-w-[60ch] text-[15px] leading-relaxed text-pencil md:text-[16px]">
                   {r.body}
                 </dd>
               </div>

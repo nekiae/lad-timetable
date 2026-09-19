@@ -8,11 +8,13 @@ const schools = [
   { name: "Городская гимназия", classes: 28, lessons: 980, windows: 0, violations: 3 },
 ];
 
+/** Короткая подпись — для карточек на телефоне: в две строки подписи
+ *  разъезжаются и цифры перестают стоять на одной линии. */
 const columns = [
-  { key: "classes", label: "Классов" },
-  { key: "lessons", label: "Уроков в неделю" },
-  { key: "windows", label: "Окон у классов" },
-  { key: "violations", label: "Нарушений норм" },
+  { key: "classes", label: "Классов", short: "Классов" },
+  { key: "lessons", label: "Уроков в неделю", short: "Уроков" },
+  { key: "windows", label: "Окон у классов", short: "Окон" },
+  { key: "violations", label: "Нарушений норм", short: "Нарушений" },
 ] as const;
 
 function tone(key: (typeof columns)[number]["key"], value: number) {
@@ -23,7 +25,7 @@ function tone(key: (typeof columns)[number]["key"], value: number) {
 
 export function Shkoly() {
   return (
-    <section className="border-y border-rule bg-sheet py-20 md:py-28">
+    <section className="border-y border-rule bg-sheet py-14 md:py-28">
       <div className="mx-auto max-w-[1400px] px-4 md:px-8">
         <h2 className="max-w-[20ch] text-3xl font-semibold leading-tight tracking-[-0.02em] text-ink md:text-4xl">
           Четыре школы разного размера
@@ -31,15 +33,17 @@ export function Shkoly() {
 
         {/* Телефон: карточка на школу. Пять колонок в 375px нечитаемы, а
             горизонтальный скролл тут ворует вертикальный свайп. */}
-        <div className="mt-10 grid gap-4 sm:grid-cols-2 md:hidden">
+        <div className="mt-7 grid gap-3 sm:grid-cols-2 md:hidden">
           {schools.map((s) => (
-            <div key={s.name} className="rounded-lg border border-rule p-4">
+            <div key={s.name} className="rounded-lg border border-rule p-4 sm:p-5">
               <div className="text-[15px] font-semibold text-ink">{s.name}</div>
-              <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3">
+              <dl className="mt-2.5 grid grid-cols-4 gap-x-3 gap-y-2 sm:grid-cols-2 sm:gap-y-3">
                 {columns.map((c) => (
                   <div key={c.key}>
-                    <dt className="text-[12px] leading-4 text-pencil">{c.label}</dt>
-                    <dd className={`text-[20px] font-semibold ${tone(c.key, s[c.key])}`}>
+                    <dt className="truncate text-[11px] leading-4 text-pencil sm:text-[12px]">
+                      {c.short}
+                    </dt>
+                    <dd className={`text-[19px] font-semibold sm:text-[20px] ${tone(c.key, s[c.key])}`}>
                       {s[c.key]}
                     </dd>
                   </div>
@@ -80,7 +84,7 @@ export function Shkoly() {
           </table>
         </div>
 
-        <div className="mt-8 grid gap-6 md:grid-cols-2 md:gap-16 lg:max-w-[80%]">
+        <div className="mt-7 grid gap-5 md:grid-cols-2 md:gap-16 lg:max-w-[80%]">
           <p className="text-[15px] leading-relaxed text-pencil">
             Ни в одной сетке нет конфликтов и нет окон у классов. Двадцать пять
             нарушений у школы агрогородка — это одна и та же норма, которую в
