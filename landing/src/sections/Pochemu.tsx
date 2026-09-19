@@ -3,28 +3,28 @@
  *  пор оно пустовало. */
 const reasons = [
   {
-    mark: "не то",
+    mark: "",
     title: "Дело не в алгоритме",
     body:
       "Составление расписания изучают шестьдесят лет, готовые солверы есть у всех. " +
       "Untis, aSc, «Ректор» работают и продаются. Но завуч всё равно сидит с бумагой.",
   },
   {
-    mark: "вот",
+    mark: "вот тут и стоит вся страна",
     title: "Восемьдесят процентов работы — это ввод данных",
     body:
       "Чтобы солвер заработал, надо формализовать нагрузку, деления на подгруппы, " +
       "совместительство, кабинетный фонд. Эту часть не автоматизировал никто.",
   },
   {
-    mark: "и это",
+    mark: "",
     title: "Половина ограничений нигде не записана",
     body:
       "«Иванова по вторникам не может», «химию нельзя после физры». Это живёт в " +
       "голове завуча, а не в таблице, и ни одна импортная система об этом не спросит.",
   },
   {
-    mark: "своё",
+    mark: "",
     title: "Санитарные нормы здесь свои",
     body:
       "Импортные системы знают чужие нормы, «Ректор» настраивается под российский " +
@@ -41,25 +41,22 @@ export function Pochemu() {
         </h2>
         <dl className="mt-8 space-y-7 md:mt-14 md:space-y-12">
           {reasons.map((r) => (
-            <div
-              key={r.title}
-              className="grid gap-x-6 gap-y-1 md:grid-cols-[88px_minmax(0,1fr)]"
-            >
-              <div
-                aria-hidden="true"
-                className="text-[13px] font-medium leading-5 text-no md:pt-0.5 md:text-[15px] md:leading-6 md:text-right"
-                style={{ transform: "rotate(-2deg)" }}
-              >
-                {r.mark}
-              </div>
-              <div>
-                <dt className="text-[18px] font-semibold leading-6 text-ink md:text-[21px] md:leading-7">
-                  {r.title}
-                </dt>
-                <dd className="mt-1.5 max-w-[60ch] text-[15px] leading-relaxed text-pencil md:text-[16px]">
-                  {r.body}
-                </dd>
-              </div>
+            <div key={r.title} className="border-l-2 border-no/25 pl-4 md:pl-5">
+              <dt className="text-[18px] font-semibold leading-6 text-ink md:text-[21px] md:leading-7">
+                {r.title}
+              </dt>
+              <dd className="mt-1.5 max-w-[60ch] text-[15px] leading-relaxed text-pencil md:text-[16px]">
+                {r.body}
+              </dd>
+              {r.mark && (
+                <div
+                  aria-hidden="true"
+                  className="mt-2 text-[14px] font-medium text-no"
+                  style={{ transform: "rotate(-1.4deg)" }}
+                >
+                  {r.mark}
+                </div>
+              )}
             </div>
           ))}
         </dl>

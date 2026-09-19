@@ -33,11 +33,11 @@ export function Hero() {
             </div>
           </div>
 
-          <div className="relative max-h-[260px] overflow-hidden sm:max-h-[420px] lg:max-h-[560px]">
-            <ScheduleGrid compact settle />
-            {/* Сетка в герое обрезается снизу: она иллюстрация, а не таблица
-                для чтения. Полный размер живёт в секции сборки. */}
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-paper to-transparent" />
+          {/* Два дня на телефоне, три на широком экране. Сетка тут
+              иллюстрация, а не таблица для чтения, и она должна кончаться
+              рамкой на границе дня, а не обрывом посреди строки. */}
+          <div>
+            <ScheduleGrid compact settle days={[2, 3]} />
           </div>
         </div>
       </div>

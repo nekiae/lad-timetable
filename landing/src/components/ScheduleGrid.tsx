@@ -78,8 +78,19 @@ function columnVisibility(index: number) {
   return index < MOBILE_CLASSES ? "" : "hidden sm:table-cell";
 }
 
-function rowVisibility(period: number) {
-  return period <= MOBILE_PERIODS ? "" : "hidden sm:table-row";
+/** Видимость строки. Считается одним правилом: два отдельных класса
+ *  («скрыть день» и «скрыть урок») конфликтуют, и `sm:table-row` побеждает
+ *  `hidden`, из-за чего на широком экране вылезают пустые строки скрытых
+ *  дней. */
+function rowVisibility(
+  day: number,
+  period: number,
+  days?: [number, number],
+): string {
+  if (days && day > days[1]) return "hidden";
+  const vidnaNaTelefone =
+    (!days || day <= days[0]) && period <= MOBILE_PERIODS;
+  return vidnaNaTelefone ? "" : "hidden sm:table-row";
 }
 
 export function ScheduleGrid({
@@ -87,6 +98,7 @@ export function ScheduleGrid({
   compact = false,
   settle = false,
   interactive = false,
+  days,
 }: {
   /** Доля поставленных уроков, 0..1. */
   progress?: number;
@@ -96,6 +108,10 @@ export function ScheduleGrid({
   settle?: boolean;
   /** Клетку можно выбрать, под сеткой появляется учитель и кабинет. */
   interactive?: boolean;
+  /** Сколько дней показывать: на телефоне и на широком экране. Ровное число
+   *  дней вместо обрезки по высоте — иначе сетка обрывается посреди строки
+   *  и выглядит как сломанная вёрстка. */
+  days?: [number, number];
 }) {
   const shown = useMemo(() => {
     const count = Math.round(
@@ -149,7 +165,7 @@ export function ScheduleGrid({
                   firstOfDay ? "border-t-2 border-t-rule" : ""
                 }`;
                 return (
-                  <tr key={`${d}-${p}`} className={rowVisibility(p)}>
+                  <tr key={`${d}-${p}`} className={rowVisibility(d, p, days)}>
                     <th
                       scope="row"
                       className={`border-r border-rule bg-paper px-1.5 py-1 text-left text-[10px] font-normal text-pencil sm:px-2 sm:text-[11px] ${rowEdge}`}

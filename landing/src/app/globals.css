@@ -58,8 +58,8 @@
       to bottom,
       transparent,
       transparent 31px,
-      rgb(28 43 79 / 0.05) 31px,
-      rgb(28 43 79 / 0.05) 32px
+      rgb(28 43 79 / 0.035) 31px,
+      rgb(28 43 79 / 0.035) 32px
     );
     background-position: 0 0;
   }
@@ -74,7 +74,7 @@
     inset-block: 0;
     left: 14px;
     width: 1px;
-    background: rgb(201 48 44 / 0.16);
+    background: rgb(201 48 44 / 0.12);
     pointer-events: none;
   }
   @media (min-width: 768px) {
