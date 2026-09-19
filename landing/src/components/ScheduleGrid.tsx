@@ -57,6 +57,23 @@ function scatter(key: string): React.CSSProperties {
   } as React.CSSProperties;
 }
 
+/** Последний урок каждого дня у каждого класса. Клетки после него не пустые
+ *  по ошибке: день у класса просто закончился. Красим их фоном, иначе хвост
+ *  дня читается как окно, а окон у класса система не допускает (HARD-8). */
+const konecDnya: Record<string, number> = (() => {
+  const out: Record<string, number> = {};
+  for (const cls of grid.classes) {
+    for (let d = 1; d <= grid.days.length; d += 1) {
+      let last = 0;
+      for (let p = 1; p <= grid.periods; p += 1) {
+        if (cells[cls]?.[`${d}-${p}`]) last = p;
+      }
+      out[`${cls}|${d}`] = last;
+    }
+  }
+  return out;
+})();
+
 function columnVisibility(index: number) {
   return index < MOBILE_CLASSES ? "" : "hidden sm:table-cell";
 }
@@ -148,6 +165,7 @@ export function ScheduleGrid({
                       const cell = cells[cls]?.[`${d}-${p}`];
                       const visible = cell && shown.has(key);
                       const isPicked = interactive && picked === key;
+                      const posleUrokov = p > (konecDnya[`${cls}|${d}`] ?? 0);
                       return (
                         <td
                           key={cls}
@@ -165,7 +183,13 @@ export function ScheduleGrid({
                             i,
                           )} ${
                             interactive && visible ? "cursor-pointer" : ""
-                          } ${isPicked ? "bg-pen-soft" : ""}`}
+                          } ${
+                            isPicked
+                              ? "bg-pen-soft"
+                              : posleUrokov
+                                ? "bg-paper"
+                                : ""
+                          }`}
                         >
                           {visible ? (
                             <span
