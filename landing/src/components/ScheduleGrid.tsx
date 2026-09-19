@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import grid from "@/data/grid.json";
 
 type Cell = { s: string; t: string; r: string };
@@ -41,6 +41,22 @@ const fillOrder = (() => {
   return mixed;
 })();
 
+/** Откуда прилетает клетка. Значения выводятся из её ключа, поэтому одинаковы
+ *  на сервере и в браузере и не дёргаются между рендерами. */
+function scatter(key: string): React.CSSProperties {
+  let h = 0;
+  for (let i = 0; i < key.length; i += 1) h = (h * 31 + key.charCodeAt(i)) % 997;
+  const dx = ((h % 17) - 8) * 7;
+  const dy = (((h >> 3) % 13) - 6) * 9;
+  const rot = (((h >> 5) % 11) - 5) * 1.6;
+  return {
+    "--dx": `${dx}px`,
+    "--dy": `${dy}px`,
+    "--rot": `${rot}deg`,
+    "--delay": `${(h % 22) * 38}ms`,
+  } as React.CSSProperties;
+}
+
 function columnVisibility(index: number) {
   return index < MOBILE_CLASSES ? "" : "hidden sm:table-cell";
 }
@@ -52,15 +68,15 @@ function rowVisibility(period: number) {
 export function ScheduleGrid({
   progress = 1,
   compact = false,
-  alive = false,
+  settle = false,
   interactive = false,
 }: {
   /** Доля поставленных уроков, 0..1. */
   progress?: number;
   /** Плотный вид для героя: без фамилий учителей. */
   compact?: boolean;
-  /** Раз в несколько секунд одна клетка вспыхивает, как после пересборки. */
-  alive?: boolean;
+  /** Уроки влетают из беспорядка и встают на места. Для героя. */
+  settle?: boolean;
   /** Клетку можно выбрать, под сеткой появляется учитель и кабинет. */
   interactive?: boolean;
 }) {
@@ -71,21 +87,7 @@ export function ScheduleGrid({
     return new Set(fillOrder.slice(0, count));
   }, [progress]);
 
-  const [flash, setFlash] = useState<string | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!alive) return;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    // Вспышки начинаются только после монтирования, поэтому разметка с сервера
-    // и первый рендер в браузере совпадают.
-    let i = 0;
-    const id = window.setInterval(() => {
-      i += 1;
-      setFlash(fillOrder[(i * 17) % fillOrder.length]);
-    }, 2600);
-    return () => window.clearInterval(id);
-  }, [alive]);
 
   const pickedCell = picked
     ? cells[picked.split("|")[0]]?.[picked.split("|")[1]]
@@ -163,12 +165,13 @@ export function ScheduleGrid({
                             i,
                           )} ${
                             interactive && visible ? "cursor-pointer" : ""
-                          } ${isPicked ? "bg-pen-soft" : ""} ${
-                            flash === key && visible ? "cell-flash" : ""
-                          }`}
+                          } ${isPicked ? "bg-pen-soft" : ""}`}
                         >
                           {visible ? (
-                            <span className="block">
+                            <span
+                              className={`block ${settle ? "settle" : ""}`}
+                              style={settle ? scatter(key) : undefined}
+                            >
                               <span
                                 className={`block truncate font-medium ${
                                   isPicked ? "text-pen" : "text-ink"

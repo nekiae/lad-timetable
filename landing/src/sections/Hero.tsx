@@ -34,7 +34,7 @@ export function Hero() {
           </div>
 
           <div className="relative max-h-[420px] overflow-hidden lg:max-h-[560px]">
-            <ScheduleGrid compact alive />
+            <ScheduleGrid compact settle />
             {/* Сетка в герое обрезается снизу: она иллюстрация, а не таблица
                 для чтения. Полный размер живёт в секции сборки. */}
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-paper to-transparent" />

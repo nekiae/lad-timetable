@@ -105,10 +105,57 @@
     animation: pen-strike 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.45s forwards;
   }
 
+  /* Уроки встают на места. Клетка начинает смещённой и повёрнутой, за
+     0,9 с приходит в ноль. Смещение приходит из --dx/--dy/--rot, они
+     считаются из номера клетки, поэтому сервер и браузер рисуют одно и то
+     же. Это первое, что видит человек на странице, и это ровно то, что
+     делает система. */
+  .settle {
+    animation: lad-settle 0.9s cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation-delay: var(--delay, 0ms);
+  }
+
   /* Клетка, в которую пересборка переставила урок: короткая вспышка синим,
      которая гаснет. Взята из web/src/index.css без изменений. */
   .cell-flash {
     animation: lad-cell-flash 2.4s ease-out;
+  }
+}
+
+@keyframes lad-settle {
+  from {
+    opacity: 0;
+    transform: translate(var(--dx, 0), var(--dy, 0)) rotate(var(--rot, 0deg));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Реплики завуча: сначала разъехались, при появлении секции выравниваются
+   в столбик. Каша показывается, а не описывается. */
+.replika {
+  opacity: 0.45;
+  transform: translate(var(--rx, 0), var(--ry, 0)) rotate(var(--rrot, 0deg));
+  transition:
+    transform 1s cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 0.7s ease-out;
+  transition-delay: var(--rdelay, 0ms);
+}
+.replika[data-sobrano="true"] {
+  opacity: 1;
+  transform: none;
+}
+
+/* На узком экране сдвигать строки вбок некуда: текст упирается в края и
+   обрезается, а это читается как поломка, а не как беспорядок. Там каша
+   держится на наклоне и вертикальном разбросе. */
+@media (max-width: 639px) {
+  .replika {
+    /* important обязателен: смещение приходит инлайновой переменной,
+       а инлайновый стиль сильнее обычного правила. */
+    --rx: 0px !important;
   }
 }
 
@@ -150,5 +197,13 @@
   }
   .zacherknuto::after {
     scale: 1 1;
+  }
+  .settle {
+    animation: none;
+  }
+  .replika {
+    opacity: 1;
+    transform: none;
+    transition: none;
   }
 }
