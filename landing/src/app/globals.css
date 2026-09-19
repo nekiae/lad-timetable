@@ -47,6 +47,89 @@
   }
 }
 
+@layer components {
+  /* Страница как школьная тетрадь. Образ заявлен в docs/DESIGN.md §1, и это
+     единственное украшение на лендинге. Линовка держится на грани
+     различимости: она должна читаться боковым зрением, а не спорить
+     с текстом. Секции на белом листе (bg-sheet) её перекрывают, и страница
+     чередуется «тетрадь / чистый лист». */
+  .tetrad {
+    background-image: repeating-linear-gradient(
+      to bottom,
+      transparent,
+      transparent 31px,
+      rgb(28 43 79 / 0.05) 31px,
+      rgb(28 43 79 / 0.05) 32px
+    );
+    background-position: 0 0;
+  }
+
+  /* Поле тетради: вертикальная линия красной ручкой вдоль левого края. */
+  .pole {
+    position: relative;
+  }
+  .pole::before {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    left: 14px;
+    width: 1px;
+    background: rgb(201 48 44 / 0.16);
+    pointer-events: none;
+  }
+  @media (min-width: 768px) {
+    .pole::before {
+      left: 40px;
+    }
+  }
+
+  /* Зачёркнуто красной ручкой. Линия прочерчивается один раз при загрузке,
+     чуть под наклоном, как рукой. */
+  .zacherknuto {
+    position: relative;
+    white-space: nowrap;
+  }
+  .zacherknuto::after {
+    content: "";
+    position: absolute;
+    left: -0.06em;
+    right: -0.06em;
+    top: 54%;
+    height: 0.06em;
+    min-height: 2px;
+    border-radius: 2px;
+    background: var(--color-no);
+    transform-origin: left center;
+    rotate: -1.4deg;
+    scale: 0 1;
+    animation: pen-strike 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.45s forwards;
+  }
+
+  /* Клетка, в которую пересборка переставила урок: короткая вспышка синим,
+     которая гаснет. Взята из web/src/index.css без изменений. */
+  .cell-flash {
+    animation: lad-cell-flash 2.4s ease-out;
+  }
+}
+
+@keyframes pen-strike {
+  to {
+    scale: 1 1;
+  }
+}
+
+@keyframes lad-cell-flash {
+  0%,
+  35% {
+    background-color: var(--color-pen-soft);
+    box-shadow: inset 0 0 0 2px var(--color-pen);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: inset 0 0 0 2px transparent;
+  }
+}
+
 @layer utilities {
   /* Узкая ширина той же семьи — только данные сетки (DESIGN.md §4).
      Отдельный Plex Sans Condensed не годится: в нём нет кириллицы. */
@@ -64,5 +147,8 @@
   *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+  }
+  .zacherknuto::after {
+    scale: 1 1;
   }
 }

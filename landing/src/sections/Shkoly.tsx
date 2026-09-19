@@ -8,6 +8,19 @@ const schools = [
   { name: "Городская гимназия", classes: 28, lessons: 980, windows: 0, violations: 3 },
 ];
 
+const columns = [
+  { key: "classes", label: "Классов" },
+  { key: "lessons", label: "Уроков в неделю" },
+  { key: "windows", label: "Окон у классов" },
+  { key: "violations", label: "Нарушений норм" },
+] as const;
+
+function tone(key: (typeof columns)[number]["key"], value: number) {
+  if (key === "windows") return "text-ok";
+  if (key === "violations") return value === 0 ? "text-ok" : "text-worse";
+  return "text-ink";
+}
+
 export function Shkoly() {
   return (
     <section className="border-y border-rule bg-sheet py-20 md:py-28">
@@ -16,31 +29,51 @@ export function Shkoly() {
           Четыре школы разного размера
         </h2>
 
-        <div className="mt-10 overflow-x-auto">
-          <table className="w-full min-w-[640px] border-collapse text-left">
+        {/* Телефон: карточка на школу. Пять колонок в 375px нечитаемы, а
+            горизонтальный скролл тут ворует вертикальный свайп. */}
+        <div className="mt-10 grid gap-4 sm:grid-cols-2 md:hidden">
+          {schools.map((s) => (
+            <div key={s.name} className="rounded-lg border border-rule p-4">
+              <div className="text-[15px] font-semibold text-ink">{s.name}</div>
+              <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3">
+                {columns.map((c) => (
+                  <div key={c.key}>
+                    <dt className="text-[12px] leading-4 text-pencil">{c.label}</dt>
+                    <dd className={`text-[20px] font-semibold ${tone(c.key, s[c.key])}`}>
+                      {s[c.key]}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          ))}
+        </div>
+
+        {/* Планшет и шире: обычная таблица, здесь она читается лучше карточек. */}
+        <div className="mt-10 hidden md:block">
+          <table className="w-full border-collapse text-left">
             <thead>
               <tr className="border-b border-rule">
                 <th className="py-3 pr-4 text-[13px] font-medium text-pencil">Школа</th>
-                <th className="py-3 pr-4 text-[13px] font-medium text-pencil">Классов</th>
-                <th className="py-3 pr-4 text-[13px] font-medium text-pencil">Уроков в неделю</th>
-                <th className="py-3 pr-4 text-[13px] font-medium text-pencil">Окон у классов</th>
-                <th className="py-3 text-[13px] font-medium text-pencil">Нарушений норм</th>
+                {columns.map((c) => (
+                  <th key={c.key} className="py-3 pr-4 text-[13px] font-medium text-pencil">
+                    {c.label}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {schools.map((s) => (
                 <tr key={s.name} className="border-b border-rule last:border-b-0">
                   <td className="py-4 pr-4 text-[15px] font-medium text-ink">{s.name}</td>
-                  <td className="py-4 pr-4 text-[22px] font-semibold text-ink">{s.classes}</td>
-                  <td className="py-4 pr-4 text-[22px] font-semibold text-ink">{s.lessons}</td>
-                  <td className="py-4 pr-4 text-[22px] font-semibold text-ok">{s.windows}</td>
-                  <td
-                    className={`py-4 text-[22px] font-semibold ${
-                      s.violations === 0 ? "text-ok" : "text-worse"
-                    }`}
-                  >
-                    {s.violations}
-                  </td>
+                  {columns.map((c) => (
+                    <td
+                      key={c.key}
+                      className={`py-4 pr-4 text-[22px] font-semibold ${tone(c.key, s[c.key])}`}
+                    >
+                      {s[c.key]}
+                    </td>
+                  ))}
                 </tr>
               ))}
             </tbody>

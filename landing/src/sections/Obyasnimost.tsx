@@ -1,6 +1,7 @@
 export function Obyasnimost() {
   return (
-    <section className="mx-auto max-w-[1400px] px-4 py-20 md:px-8 md:py-28">
+    <section className="tetrad pole">
+      <div className="mx-auto max-w-[1400px] px-4 py-20 md:px-8 md:py-28">
       <div className="mx-auto max-w-[62ch]">
         <h2 className="text-3xl font-semibold leading-tight tracking-[-0.02em] text-ink md:text-4xl">
           Иногда правильный ответ — «так нельзя»
@@ -31,6 +32,7 @@ export function Obyasnimost() {
           выхода — не умеет никто. Это же и оружие завуча в разговоре с
           учителем: отказ приходит со ссылкой на пункт документа.
         </p>
+      </div>
       </div>
     </section>
   );

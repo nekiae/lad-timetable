@@ -12,7 +12,7 @@ const STEP_MS = 40;
 
 export function Sborka() {
   const ref = useRef<HTMLDivElement>(null);
-  const inView = useInView(ref, { once: true, amount: 0.4 });
+  const inView = useInView(ref, { once: true, amount: 0.15 });
   const reduce = useReducedMotion();
 
   const [progress, setProgress] = useState(0);
@@ -56,11 +56,11 @@ export function Sborka() {
     <section
       id="sborka"
       ref={ref}
-      className="border-y border-rule bg-sheet py-20 md:py-28"
+      className="scroll-mt-16 border-y border-rule bg-sheet py-20 md:py-28"
     >
       <div className="mx-auto max-w-[1400px] px-4 md:px-8">
-        <div className="max-w-[24ch]">
-          <h2 className="text-3xl font-semibold leading-tight tracking-[-0.02em] text-ink md:text-4xl">
+        <div>
+          <h2 className="max-w-[20ch] text-3xl font-semibold leading-tight tracking-[-0.02em] text-ink md:text-4xl">
             Так это выглядит
           </h2>
           <p className="mt-4 max-w-[52ch] text-[17px] leading-relaxed text-pencil">
@@ -69,32 +69,50 @@ export function Sborka() {
           </p>
         </div>
 
-        <div className="mt-10 grid gap-8 lg:grid-cols-[minmax(0,1fr)_260px] lg:gap-12">
-          <div>
-            <ScheduleGrid progress={progress} />
+        {/* На телефоне панель стоит над сеткой: иначе пока идёт сборка,
+            секундомер остаётся за нижним краем экрана и весь смысл секции
+            проходит мимо. На широком экране она уходит вправо. */}
+        <div className="mt-10 grid gap-8 lg:grid-cols-[minmax(0,1fr)_280px] lg:gap-12">
+          <div className="order-1 lg:order-2 lg:pt-1">
+            <div className="border-t-2 border-ink pt-4">
+              <div className="text-[13px] text-pencil">Прошло</div>
+              <div className="mt-1 flex items-baseline gap-2">
+                <span className="text-[64px] font-semibold leading-[0.9] tracking-[-0.03em] text-ink tabular-nums md:text-[76px]">
+                  {seconds}
+                </span>
+                <span className="text-[22px] font-medium text-pencil">с</span>
+              </div>
+            </div>
+
+            <div className="mt-7 grid grid-cols-2 gap-x-6 gap-y-5 lg:grid-cols-1 lg:gap-6">
+              <Readout
+                label="Уроков поставлено"
+                value={`${placed}`}
+                note={`из ${gridStats.lessons}`}
+              />
+              <Readout
+                label="Конфликтов в сетке"
+                value="0"
+                note={done ? "проверено валидатором" : ""}
+                tone={done ? "ok" : "plain"}
+              />
+              <button
+                type="button"
+                onClick={run}
+                disabled={running}
+                className="col-span-2 w-full rounded border border-rule bg-paper px-4 py-2.5 text-[15px] font-medium text-ink transition-colors duration-150 hover:border-pen hover:text-pen disabled:cursor-default disabled:text-pencil disabled:hover:border-rule lg:col-span-1 lg:w-fit"
+              >
+                {running ? "Составляю…" : "Составить заново"}
+              </button>
+              <p className="col-span-2 text-[13px] leading-5 text-pencil lg:col-span-1">
+                Это часть сетки. В гимназии 28 классов и 980 уроков в неделю, и
+                они ставятся в тот же проход.
+              </p>
+            </div>
           </div>
 
-          <div className="flex flex-col gap-6 lg:pt-1">
-            <Readout label="Уроков поставлено" value={`${placed}`} total={`из ${gridStats.lessons}`} />
-            <Readout label="Прошло" value={`${seconds} с`} total="" />
-            <Readout
-              label="Конфликтов в сетке"
-              value="0"
-              total={done ? "проверено валидатором" : ""}
-              tone={done ? "ok" : "plain"}
-            />
-            <button
-              type="button"
-              onClick={run}
-              disabled={running}
-              className="mt-2 w-fit rounded border border-rule bg-paper px-4 py-2.5 text-[15px] font-medium text-ink transition-colors duration-150 hover:border-pen hover:text-pen disabled:cursor-default disabled:text-pencil disabled:hover:border-rule"
-            >
-              {running ? "Составляю…" : "Составить заново"}
-            </button>
-            <p className="text-[13px] leading-5 text-pencil">
-              Шесть классов из двадцати восьми. Полная сетка гимназии в тот же
-              проход занимает 980 уроков.
-            </p>
+          <div className="order-2 lg:order-1">
+            <ScheduleGrid progress={progress} interactive />
           </div>
         </div>
       </div>
@@ -105,25 +123,25 @@ export function Sborka() {
 function Readout({
   label,
   value,
-  total,
+  note,
   tone = "plain",
 }: {
   label: string;
   value: string;
-  total: string;
+  note: string;
   tone?: "plain" | "ok";
 }) {
   return (
     <div className="border-t border-rule pt-3">
       <div className="text-[13px] text-pencil">{label}</div>
       <div
-        className={`mt-1 text-[28px] font-semibold leading-8 ${
+        className={`mt-1 text-[28px] font-semibold leading-8 tabular-nums ${
           tone === "ok" ? "text-ok" : "text-ink"
         }`}
       >
         {value}
       </div>
-      {total && <div className="text-[13px] text-pencil">{total}</div>}
+      {note && <div className="text-[13px] text-pencil">{note}</div>}
     </div>
   );
 }

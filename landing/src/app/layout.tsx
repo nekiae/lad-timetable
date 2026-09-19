@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "@fontsource-variable/ibm-plex-sans";
 import "./globals.css";
 
@@ -14,6 +14,12 @@ export const metadata: Metadata = {
     locale: "ru_BY",
     type: "website",
   },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: "#f6f8fb",
 };
 
 export default function RootLayout({

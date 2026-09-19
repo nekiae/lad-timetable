@@ -1,6 +1,6 @@
 export function Header() {
   return (
-    <header className="sticky top-0 z-50 border-b border-rule bg-paper/90 backdrop-blur">
+    <header className="sticky top-0 z-50 border-b border-rule bg-paper/95 backdrop-blur-sm">
       <div className="mx-auto flex h-16 max-w-[1400px] items-center justify-between gap-6 px-4 md:px-8">
         <a href="#top" className="flex items-baseline gap-2.5">
           <span className="text-[19px] font-semibold tracking-[-0.01em] text-ink">

@@ -27,7 +27,8 @@ const reasons = [
 
 export function Pochemu() {
   return (
-    <section className="mx-auto max-w-[1400px] px-4 py-20 md:px-8 md:py-28">
+    <section className="tetrad pole">
+      <div className="mx-auto max-w-[1400px] px-4 py-20 md:px-8 md:py-28">
       <h2 className="max-w-[16ch] text-3xl font-semibold leading-tight tracking-[-0.02em] text-ink md:text-4xl">
         Почему это до сих пор делают руками
       </h2>
@@ -43,6 +44,7 @@ export function Pochemu() {
           </div>
         ))}
       </dl>
+      </div>
     </section>
   );
 }

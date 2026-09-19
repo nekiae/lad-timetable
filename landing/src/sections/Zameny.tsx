@@ -1,9 +1,10 @@
 export function Zameny() {
   return (
-    <section className="mx-auto max-w-[1400px] px-4 py-20 md:px-8 md:py-28">
+    <section className="tetrad pole">
+      <div className="mx-auto max-w-[1400px] px-4 py-20 md:px-8 md:py-28">
       <div className="grid items-start gap-10 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)] lg:gap-20">
         <div className="order-2 lg:order-1">
-          <div className="rounded-lg border border-rule bg-sheet p-6 md:p-8">
+          <div className="rounded-lg border border-rule bg-sheet p-5 sm:p-6 md:p-8">
             <div className="text-[13px] text-pencil">Понедельник, 2-й урок</div>
             <div className="mt-1 text-[17px] font-semibold text-ink">
               7«Б», физика. Учитель на больничном.
@@ -43,6 +44,7 @@ export function Zameny() {
             свободен, но не ведёт этот предмет.
           </p>
         </div>
+      </div>
       </div>
     </section>
   );
