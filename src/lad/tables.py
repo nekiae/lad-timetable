@@ -131,6 +131,14 @@ def grid_to_wishes(grid: pd.DataFrame) -> dict:
 
 # ------------------------------------------------------------------ данные
 
+def plural(n: int, one: str, few: str, many: str) -> str:
+    """«31 урок», а не «31 уроков». Сообщения читает завуч, а не программист."""
+    tail, hundred = n % 10, n % 100
+    if 11 <= hundred <= 14 or tail == 0 or tail >= 5:
+        return many
+    return one if tail == 1 else few
+
+
 def blank_tables() -> dict[str, pd.DataFrame]:
     return {
         "classes": pd.DataFrame({"класс": ["5А"], "учеников": [24], "смена": ["1"],
@@ -431,8 +439,11 @@ def build_school(tables: dict[str, pd.DataFrame], settings: dict,
     for tid, hours in by_teacher.items():
         if hours > slots_per_week:
             problems.append(
-                f"у учителя {names[tid]} {hours} часов в неделю, "
-                f"а в сетке всего {slots_per_week} уроков — расписание невозможно"
+                f"у учителя {names[tid]} {hours} "
+                f"{plural(hours, 'час', 'часа', 'часов')} в неделю, "
+                f"а в сетке всего {slots_per_week} "
+                f"{plural(slots_per_week, 'урок', 'урока', 'уроков')} — "
+                f"расписание невозможно"
             )
     lesson_days = len([d for d, kind in school.day_kinds.items() if kind == DayKind.LESSONS])
     for c in classes:
@@ -451,9 +462,17 @@ def build_school(tables: dict[str, pd.DataFrame], settings: dict,
         start, end = school.window(c.shift)
         mine_slots = (end - start + 1) * lesson_days
         if hours > mine_slots:
-            where = "" if mine_slots == slots_per_week else f" (смена {int(c.shift)})"
-            problems.append(f"у класса {c.name} {hours} уроков в неделю "
-                            f"при {mine_slots} местах в сетке{where}")
+            per_day = end - start + 1
+            where = ("" if mine_slots == slots_per_week
+                     else f", а вторая смена учится {per_day} "
+                          f"{plural(per_day, 'урок', 'урока', 'уроков')} в день")
+            problems.append(
+                f"у класса {c.name} {hours} "
+                f"{plural(hours, 'урок', 'урока', 'уроков')} в неделю "
+                f"при {mine_slots} местах в сетке{where}. Столько уроков "
+                f"в неделю не поместится: уберите лишние часы из нагрузки "
+                f"или добавьте урок в день"
+            )
 
     # Кабинетов должно хватать на все классы, которые учатся ОДНОВРЕМЕННО.
     # Класс учится без окон, значит на первом уроке своей смены в школе сидят

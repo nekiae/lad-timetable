@@ -141,8 +141,10 @@ export function SchoolPage() {
 
       {check && (
         <p className="mt-2 text-pencil">
-          {check.stats.classes} классов, {check.stats.teachers} учителей, {check.stats.rooms} кабинетов,{" "}
-          {check.stats.hours} уроков в неделю.
+          {check.stats.classes} {plural(check.stats.classes, "класс", "класса", "классов")},{" "}
+          {check.stats.teachers} {plural(check.stats.teachers, "учитель", "учителя", "учителей")},{" "}
+          {check.stats.rooms} {plural(check.stats.rooms, "кабинет", "кабинета", "кабинетов")},{" "}
+          {check.stats.hours} {plural(check.stats.hours, "урок", "урока", "уроков")} в неделю.
         </p>
       )}
 

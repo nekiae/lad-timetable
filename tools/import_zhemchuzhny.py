@@ -158,8 +158,22 @@ LINE_FIX = {
 }
 
 
+# Не ответы завуча, а НАШИ предположения: без них школа не считается,
+# но подтвердить их обязательно. Печатаются отдельным списком.
+ASSUMED = {
+    # У 7«А» русский 4 часа (Воробей, «7а – 4/3 ч.») и столько же по типовому
+    # плану. У Леончук на 7«Б», 7«В» и 7«Г» стоит 15 часов — это 5 на класс,
+    # и тогда класс не помещается во вторую смену. Читаем как 12.
+    "7бвг – 15 ч.,": ("7бвг – 12 ч.,",
+                      "у 7Б, 7В, 7Г русский 4 ч, а не 5: иначе класс "
+                      "не помещается во вторую смену"),
+}
+
+
 def parse(text: str) -> list[dict]:
     for wrong, right in LINE_FIX.items():
+        text = text.replace(wrong, right)
+    for wrong, (right, _) in ASSUMED.items():
         text = text.replace(wrong, right)
     text = glue(text)
     rows: list[dict] = []
@@ -500,6 +514,9 @@ def main() -> int:
     print(f"{OUT.relative_to(ROOT)}: {len(load)} строк нагрузки, "
           f"{sum(r['часов'] for r in load)} часов, "
           f"{len(data['tables']['teachers'])} учителей")
+    print("\nПредположения (подтвердить у завуча):")
+    for _, (_, why) in ASSUMED.items():
+        print(" •", why)
     print(f"\nРасхождений: {len(problems)}")
     for line in problems:
         print(" •", line)
