@@ -42,6 +42,31 @@ export function SchoolStep({ doc, update }: StepProps) {
                onChange={(e) => set("sixth_day", e.target.checked)} />
         <span>Шестой школьный день: суббота с факультативами и кружками, уроков нет</span>
       </label>
+      <label className="flex items-start gap-2">
+        <input type="checkbox" className="mt-1 h-4 w-4 accent-pen"
+               checked={Number(s["вторая смена с урока"] ?? 0) > 0}
+               onChange={(e) => {
+                 set("вторая смена с урока", e.target.checked ? Number(s.periods ?? 8) - 1 : 0);
+                 set("уроков во второй смене", e.target.checked ? 6 : 0);
+               }} />
+        <span>Школа работает в две смены</span>
+      </label>
+      {Number(s["вторая смена с урока"] ?? 0) > 0 && (
+        <div className="grid gap-5 sm:grid-cols-2">
+          <Field label="Вторая смена начинается с урока"
+                 hint="Номер по общей сетке. Если вторая смена садится в 14:00, а это же время —
+                       седьмой урок первой, ставьте 7: час один и тот же, и учитель в нём один.">
+            <input type="number" min={2} max={12} className={inputClass}
+                   value={Number(s["вторая смена с урока"] ?? 7)}
+                   onChange={(e) => set("вторая смена с урока", Number(e.target.value))} />
+          </Field>
+          <Field label="Уроков во второй смене" hint="Сколько уроков подряд учится вторая смена.">
+            <input type="number" min={4} max={10} className={inputClass}
+                   value={Number(s["уроков во второй смене"] ?? 6)}
+                   onChange={(e) => set("уроков во второй смене", Number(e.target.value))} />
+          </Field>
+        </div>
+      )}
     </div>
   );
 }
@@ -88,6 +113,10 @@ export function ClassesStep({ schoolId, doc, setRows, run }: StepProps) {
         <DataTable rows={rows} onChange={(r) => setRows("classes", r)} addLabel="Добавить класс" columns={[
           { key: "класс", label: "Класс", placeholder: "7Б" },
           { key: "учеников", label: "Учеников", type: "number", width: "w-32" },
+          { key: "смена", label: "Смена", type: "select", options: ["1", "2"], width: "w-28",
+            title: "Вторая смена учится после первой, но учителя и кабинеты у них общие — "
+                   + "расписание считается на одной сетке. Когда начинается вторая смена, "
+                   + "задаётся на шаге «Составление»." },
           { key: "повышенный уровень", label: "Повышенный уровень", type: "bool", width: "w-44",
             title: "Проставляется сам, если в нагрузке у предмета выбран повышенный уровень." },
         ]} />

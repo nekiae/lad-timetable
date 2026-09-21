@@ -327,7 +327,11 @@ export function SchoolPage() {
       )}
       {done?.type === "result" && !done.schedule_id && (
         <Notice tone="worse" title="Расписание с такими данными не находится" className="mt-8">
-          Проверьте кабинеты и нагрузку: часов не может быть больше, чем уроков в сетке.
+          {done.why?.length ? (
+            <ul className="list-disc pl-5">{done.why.map((w) => <li key={w}>{w}</li>)}</ul>
+          ) : (
+            "Проверьте кабинеты и нагрузку: часов не может быть больше, чем уроков в сетке."
+          )}
         </Notice>
       )}
     </div>

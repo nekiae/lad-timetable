@@ -420,7 +420,23 @@ class School:
     day_kinds: dict[int, DayKind] = field(
         default_factory=lambda: {d: DayKind.LESSONS for d in range(1, 6)} | {6: DayKind.SIXTH_DAY}
     )
+    # Длина оси уроков в дне. При двух сменах это ВСЯ ось, от первого урока
+    # первой смены до последнего второй, а не длина одной смены.
     periods_per_day: int = 8
+    # Окно смены на этой оси: номер смены → (первый урок, последний).
+    # Смены живут на ОДНОЙ оси, потому что у них общие учителя и общие
+    # кабинеты: 14:00 — это и седьмой урок первой смены, и первый второй.
+    # Считать смены по отдельности нельзя — учитель, ведущий в обеих,
+    # выглядел бы свободным там, где он занят.
+    shift_windows: dict[int, tuple[int, int]] = field(default_factory=dict)
+
+    def window(self, shift: Shift = Shift.FIRST) -> tuple[int, int]:
+        """С какого по какой урок учится эта смена."""
+        return self.shift_windows.get(int(shift), (1, self.periods_per_day))
+
+    def class_window(self, class_id: str) -> tuple[int, int]:
+        found = next((c for c in self.classes if c.id == class_id), None)
+        return self.window(found.shift if found else Shift.FIRST)
 
     def lesson_slots(self, shift: Shift = Shift.FIRST) -> list[Slot]:
         """Все слоты, куда физически можно поставить урок."""

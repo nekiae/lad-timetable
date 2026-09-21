@@ -489,6 +489,25 @@ def _solve(
 
     x_slots = set(slots)
 
+    # --- СМЕНЫ. Ось уроков в дне общая для всей школы, а класс живёт в окне
+    # своей смены: первая — уроки 1–8, вторая — 7–12, и седьмой урок у них
+    # общий по времени. Так учитель, работающий в обеих сменах, не может
+    # оказаться в двух местах, а кабинет второй смены освобождается первой.
+    # Отдельный прогон на каждую смену этого бы не дал.
+    row_window: dict[int, tuple[int, int]] = {}
+    for i, item in enumerate(school.load):
+        starts, ends = [], []
+        for class_id in school.group(item.group_id).class_ids:
+            start, end = school.class_window(class_id)
+            starts.append(start)
+            ends.append(end)
+        row_window[i] = (max(starts or [1]), min(ends or [school.periods_per_day]))
+    if any(w != (1, school.periods_per_day) for w in row_window.values()):
+        for i, (start, end) in row_window.items():
+            for slot in slots:
+                if not start <= slot.period <= end:
+                    model.Add(x[i, slot] == 0)
+
     # --- HARD-4: все часы из нагрузки выданы ровно в нужном количестве
     for i, item in enumerate(school.load):
         model.Add(sum(x[i, s] for s in slots) == item.hours_per_week)
@@ -678,8 +697,11 @@ def _solve(
             model.AddMaxEquality(var, [x[i, slot] for i in class_indices])
             busy[class_id, slot] = var
 
+        # «Без окон» считается ВНУТРИ окна смены: у второй смены день
+        # начинается не с первого урока оси, а с седьмого.
+        first_period, last_period = school.class_window(class_id)
         for day in {s.day for s in slots}:
-            for period in range(1, school.periods_per_day):
+            for period in range(first_period, last_period):
                 model.Add(
                     busy[class_id, Slot(day, period, shift)]
                     >= busy[class_id, Slot(day, period + 1, shift)]
@@ -996,11 +1018,12 @@ def _solve(
     )
     if need_edges:
         for class_id in whole:
+            class_first, class_last = school.class_window(class_id)
             for day in days:
-                for period in range(1, school.periods_per_day + 1):
+                for period in range(class_first, class_last + 1):
                     var = model.NewBoolVar(f"last_{class_id}_{day}_{period}")
                     here = busy[class_id, Slot(day, period, shift)]
-                    if period == school.periods_per_day:
+                    if period == class_last:
                         model.Add(var == here)
                     else:
                         nxt = busy[class_id, Slot(day, period + 1, shift)]
@@ -1027,11 +1050,13 @@ def _solve(
         не на краю. Двусторонняя связь для этого не нужна, а стоит втрое дороже.
         """
         terms = []
+        class_first, class_last = school.class_window(class_id)
         for day in days:
             for i in indices:
-                terms.append(x[i, Slot(day, 1, shift)])  # первый урок — всегда № 1
+                # первый урок дня — начало окна смены, а не всегда № 1
+                terms.append(x[i, Slot(day, class_first, shift)])
                 on_last = model.NewBoolVar(f"edge_{tag}_{i}_{day}")
-                for period in range(2, school.periods_per_day + 1):
+                for period in range(class_first + 1, class_last + 1):
                     model.Add(on_last >= x[i, Slot(day, period, shift)]
                               + last[class_id, day, period] - 1)
                 terms.append(on_last)

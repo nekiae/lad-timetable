@@ -129,15 +129,20 @@ def check(school: School, lessons: list[Lesson]) -> Report:
             )
 
     # --- окна
-    for periods in class_busy.values():
-        report.class_gaps += len(set(range(1, max(periods) + 1)) - periods)
+    # Окно у класса считается от начала ЕГО смены: у второй смены день
+    # начинается с седьмого урока общей оси, и пустые уроки 1–6 — это не дыра
+    # в расписании, а первая смена (найдено 21.09.2026 на Жемчужненской).
+    for (class_id, _), periods in class_busy.items():
+        first = school.class_window(class_id)[0]
+        report.class_gaps += len(set(range(first, max(periods) + 1)) - periods)
     for periods in teacher_busy.values():
         report.teacher_gaps += len(set(range(min(periods), max(periods) + 1)) - periods)
     report.teacher_days = len(teacher_busy)
 
     # HARD-8: окно у класса — это нарушение, а не просто метрика
     for (class_id, day), periods in class_busy.items():
-        holes = sorted(set(range(1, max(periods) + 1)) - periods)
+        first = school.class_window(class_id)[0]
+        holes = sorted(set(range(first, max(periods) + 1)) - periods)
         if holes:
             report.violations.append(
                 Violation("HARD-8", f"у класса {class_id} окно "

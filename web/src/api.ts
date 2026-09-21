@@ -213,6 +213,8 @@ export type SolveDone = {
   seconds?: number;
   relaxed?: string[];
   problems?: string[];
+  /** Почему сетки нет: результат диагностики солвера, а не общая отговорка. */
+  why?: string[];
   error?: string;
   schedule_id: string | null;
 };

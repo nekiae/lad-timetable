@@ -64,7 +64,10 @@ SPECIAL_ROOMS = [
 
 FIO = re.compile(r"^([А-ЯЁ][а-яё]+)\s+([А-ЯЁ])[а-яё]*\.?\s*([А-ЯЁ])[а-яё]*\.?\s*$")
 # «8абвг – 12 ч.», «9а -2 ч.», «11аб – 3 ч.(профиль)», «7а –3/4 ч.»
-HOURS = re.compile(r"(\d{1,2})\s*([а-дА-Д]*)\s*[-–—]\s*(\d+)(?:\s*/\s*(\d+))?\s*ч", re.I)
+# «11б (проф.) – 4 ч»: пометка уровня стоит между классом и часами,
+# и без неё запись просто не находится — а часы уходят соседнему классу.
+HOURS = re.compile(r"(\d{1,2})\s*([а-дА-Д]*)\s*(\([^)]*\))?\s*[-–—]\s*"
+                   r"(\d+)(?:\s*/\s*(\d+))?\s*ч", re.I)
 
 SUBJECT_WORDS = [
     ("математик", "Математика"), ("астроном", "Астрономия"),
@@ -185,10 +188,17 @@ def parse(text: str) -> list[dict]:
         # у Барсуковой «8аг – 10 ч., 9б – 5 ч.(профиль)» повышенный уровень
         # только у 9«Б». Пометку ищем рядом с часами — она стоит и после
         # («5 ч.(профиль)»), и перед («10 (проф.) – 4 ч»).
-        for found in HOURS.finditer(line):
-            near = line[max(0, found.start() - 14): found.end() + 15].lower()
+        spots = list(HOURS.finditer(line))
+        for number, found in enumerate(spots):
+            # Пометка «(профиль)» относится к СВОЕМУ классу: у Жихарко
+            # «10 – 4 ч., 11б (проф) – 6 ч.» повышенный уровень только у 11«Б».
+            # Поэтому смотрим строго между соседними записями часов.
+            left = spots[number - 1].end() if number else 0
+            right = spots[number + 1].start() if number + 1 < len(spots) else len(line)
+            near = line[left:right].lower()
             advanced = "проф" in near or "повышен" in near
-            parallel, letters, first, _second = found.groups()
+            parallel, letters, mark, first, _second = found.groups()
+            near = f"{near} {mark or ''}".lower()
             letters = (letters or "").upper() or " "
             names = [f"{parallel}{ch}".strip() for ch in letters]
             per = share(int(first), names, subject, advanced)
@@ -412,7 +422,27 @@ def dedupe(rows: list[dict]) -> list[dict]:
             continue
         seen.add(key)
         out.append(row)
-    return out
+    # Один и тот же предмет в одном классе у нескольких учителей с одинаковыми
+    # часами — тоже след копипасты: белорусский в десятом записан трижды,
+    # по три часа, хотя класс один и по плану часов три. Оставляем первого
+    # по документу, остальных выносим в вопросы: кто из них ведёт на самом
+    # деле, знает только завуч.
+    kept: dict[tuple[str, str, float], str] = {}
+    result = []
+    for row in out:
+        if row.get("part") or row["subject"] in SPLIT_SUBJECTS:
+            result.append(row)
+            continue
+        key = (row["class"], row["subject"], row["hours"])
+        if key in kept and kept[key] != row["teacher"]:
+            row["note"] = (f"этот предмет в классе записан ещё и на "
+                           f"{kept[key]} — строка отброшена, кто ведёт?")
+            row["dropped"] = True
+            result.append(row)
+            continue
+        kept.setdefault(key, row["teacher"])
+        result.append(row)
+    return result
 
 
 def tables(rows: list[dict]) -> dict:
@@ -428,7 +458,7 @@ def tables(rows: list[dict]) -> dict:
               for n in plain]
     load = []
     for row in rows:
-        if not row["subject"] or not row["teacher"]:
+        if not row["subject"] or not row["teacher"] or row.get("dropped"):
             continue
         load.append({
             "класс": row["class"], "предмет": row["subject"],
@@ -438,10 +468,15 @@ def tables(rows: list[dict]) -> dict:
             "тип": "урок", "кабинет": row.get("room") or "—",
         })
     return {
+        # Звонки школы: первая смена 8:10–15:40 (восемь уроков), вторая
+        # 14:00–19:30 (шесть). 14:00 — это седьмой урок первой смены и первый
+        # второй, то есть ось одна, а вторая смена начинается с седьмого.
         "settings": {"name": "Жемчужненская средняя школа", "periods": 8,
+                     "вторая смена с урока": 7, "уроков во второй смене": 6,
                      "days": 5, "sixth_day": True, "intro_seen": True},
         "tables": {
             "classes": [{"класс": c, "учеников": 24,
+                         "смена": "2" if c in SECOND_SHIFT else "1",
                          "повышенный уровень": c in advanced_classes} for c in classes],
             "subjects": [{"предмет": s,
                           "кабинет": PLAN_ROOM.get(TO_PLAN.get(s, s), "обычный"),

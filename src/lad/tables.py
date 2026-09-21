@@ -12,8 +12,8 @@ from pathlib import Path
 import pandas as pd
 
 from .model import (
-    DayKind, LessonKind, Level, LoadItem, Room, RoomKind, School, SchoolClass, Slot,
-    StudyGroup, Subject, Teacher,
+    DayKind, LessonKind, Level, LoadItem, Room, RoomKind, School, SchoolClass,
+    Shift, Slot, StudyGroup, Subject, Teacher,
 )
 from .storage import load_norms
 
@@ -133,7 +133,7 @@ def grid_to_wishes(grid: pd.DataFrame) -> dict:
 
 def blank_tables() -> dict[str, pd.DataFrame]:
     return {
-        "classes": pd.DataFrame({"класс": ["5А"], "учеников": [24],
+        "classes": pd.DataFrame({"класс": ["5А"], "учеников": [24], "смена": ["1"],
                                  "повышенный уровень": [False]}),
         "subjects": pd.DataFrame({"предмет": ["Математика"], "кабинет": ["обычный"],
                                   "только в нём": [False], "всегда парой": [False]}),
@@ -270,8 +270,10 @@ def build_school(tables: dict[str, pd.DataFrame], settings: dict,
                 "Название должно начинаться с цифры — «5А», «10Б»"
             )
             continue
+        shift = Shift.SECOND if str(row.get("смена") or "1").strip() == "2" else Shift.FIRST
         classes.append(SchoolClass(id=name, parallel=parallel, letter=letter,
                                    size=int(row.get("учеников") or 0),
+                                   shift=shift,
                                    advanced=bool(row.get("повышенный уровень", False))))
         class_rows[name] = row
         class_ids[name] = name
@@ -392,6 +394,15 @@ def build_school(tables: dict[str, pd.DataFrame], settings: dict,
             c.advanced = True
 
     periods = int(settings.get("periods", 8))
+    # Вторая смена начинается ДО конца первой: в Жемчужненской 14:00 — это
+    # и седьмой урок первой смены, и первый второй. Поэтому ось одна, а смена
+    # задаётся окном на ней.
+    second_from = int(settings.get("вторая смена с урока", 0) or 0)
+    second_periods = int(settings.get("уроков во второй смене", 0) or 0)
+    windows: dict[int, tuple[int, int]] = {}
+    if second_from and second_periods:
+        windows = {1: (1, periods), 2: (second_from, second_from + second_periods - 1)}
+        periods = max(periods, second_from + second_periods - 1)
     lesson_days = int(settings.get("days", 5))
     day_kinds = {d: DayKind.LESSONS for d in range(1, lesson_days + 1)}
     if settings.get("sixth_day", True):
@@ -406,7 +417,7 @@ def build_school(tables: dict[str, pd.DataFrame], settings: dict,
     school = School(
         name=settings.get("name", "Школа"), classes=classes, groups=list(groups.values()),
         teachers=teachers, subjects=subjects, rooms=rooms, load=load,
-        periods_per_day=periods, day_kinds=day_kinds,
+        periods_per_day=periods, day_kinds=day_kinds, shift_windows=windows,
         norms=load_norms(),  # санитарные нормы из первоисточника, если файл есть
     )
 
@@ -423,12 +434,44 @@ def build_school(tables: dict[str, pd.DataFrame], settings: dict,
                 f"у учителя {names[tid]} {hours} часов в неделю, "
                 f"а в сетке всего {slots_per_week} уроков — расписание невозможно"
             )
+    lesson_days = len([d for d, kind in school.day_kinds.items() if kind == DayKind.LESSONS])
     for c in classes:
-        hours = sum(i.hours_per_week for i in load
-                    if school.group(i.group_id).class_ids == [c.id]
-                    and school.group(i.group_id).part is None)
-        if hours > slots_per_week:
-            problems.append(f"у класса {c.name} {hours} часов при {slots_per_week} слотах")
+        # Класс занимает слот один раз, даже когда в нём идут две подгруппы:
+        # они учатся в один и тот же час. Поэтому у делёного предмета считаем
+        # часы одной подгруппы — наибольшей.
+        mine = [i for i in load if school.group(i.group_id).class_ids == [c.id]]
+        hours = sum(i.hours_per_week for i in mine
+                    if school.group(i.group_id).part is None)
+        by_subject: dict[str, int] = {}
+        for item in mine:
+            if school.group(item.group_id).part is not None:
+                by_subject[item.subject_id] = max(by_subject.get(item.subject_id, 0),
+                                                  item.hours_per_week)
+        hours += sum(by_subject.values())
+        start, end = school.window(c.shift)
+        mine_slots = (end - start + 1) * lesson_days
+        if hours > mine_slots:
+            where = "" if mine_slots == slots_per_week else f" (смена {int(c.shift)})"
+            problems.append(f"у класса {c.name} {hours} уроков в неделю "
+                            f"при {mine_slots} местах в сетке{where}")
+
+    # Кабинетов должно хватать на все классы, которые учатся ОДНОВРЕМЕННО.
+    # Класс учится без окон, значит на первом уроке своей смены в школе сидят
+    # все её классы разом. Если комнат меньше — расписания нет, и сказать это
+    # надо здесь: солвер на такой школе отдаёт голое INFEASIBLE за секунды
+    # (найдено 21.09.2026 на Жемчужненской: 24 класса на 15 обычных кабинетов,
+    # потому что смены не были заведены).
+    seats_total = sum(max(1, room.parallel_classes) for room in rooms)
+    for shift in sorted({c.shift for c in classes}, key=int):
+        at_once = [c for c in classes if c.shift == shift]
+        if seats_total and len(at_once) > seats_total:
+            label = f" во вторую смену" if int(shift) == 2 else ""
+            problems.append(
+                f"классов{label} {len(at_once)}, а кабинетов на них "
+                f"{seats_total}: столько классов не рассадить, и расписания "
+                f"с такими данными не существует. Либо добавьте кабинеты, "
+                f"либо разведите классы по сменам (колонка «смена»)"
+            )
 
     # Подгруппы одного деления идут ОДНОВРЕМЕННО (иначе полкласса ждёт вторую
     # половину). Значит и кабинетов нужно столько же, сколько подгрупп. Один

@@ -78,12 +78,21 @@ def _worker(doc: dict, options: dict, events, stop_flag) -> None:
                        params=options.get("params"),
                        settle=float(options["settle"]) if options.get("settle") else None)
         lessons = assign_rooms(school, result.lessons) if result.ok else []
+        # Пустой результат без объяснения — худшее, что можно показать завучу:
+        # «не находится» не говорит, что чинить. Выясняем причину тем же
+        # способом, что и солвер: снимаем нормы и смотрим, дело в них или
+        # в арифметике школы.
+        why: list[str] = []
+        if not lessons and not stop_flag.is_set():
+            from lad.solve import diagnose
+            why = diagnose(school, rules=rules, max_seconds=20, total_seconds=120)
         events.put({
             "type": "result",
             "status": result.status,
             "seconds": time.monotonic() - started,
             "penalty": result.penalty,
             "relaxed": result.relaxed,
+            "why": why,
             "lessons": lessons_to_dict(lessons),
         })
     except BaseException:  # noqa: BLE001 — любую ошибку отдаём наверх текстом
