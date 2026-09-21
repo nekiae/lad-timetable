@@ -532,9 +532,18 @@ def check_norms(school: School) -> list[str]:
         max_days = (days + 1) // 2
         subject_names = {s.id: s.name.lower() for s in school.subjects}
         for c in school.classes:
-            hours = sum(i.hours_per_week for i in school.load
-                        if c.id in school.group(i.group_id).class_ids
-                        and subject_names.get(i.subject_id, "").startswith(pe_name[:12]))
+            # Считаем УРОКИ класса, а не часы учителей: подгруппы идут в один
+            # слот. В X–XI школа делит физкультуру не целиком — два урока
+            # по группам, третий всем классом, — и сумма часов давала бы 5
+            # там, где у класса три урока (найдено 21.09.2026 на Жемчужном).
+            mine = [i for i in school.load
+                    if c.id in school.group(i.group_id).class_ids
+                    and subject_names.get(i.subject_id, "").startswith(pe_name[:12])]
+            whole_pe = sum(i.hours_per_week for i in mine
+                           if school.group(i.group_id).part is None)
+            parts_pe = [i.hours_per_week for i in mine
+                        if school.group(i.group_id).part is not None]
+            hours = whole_pe + (max(parts_pe) if parts_pe else 0)
             if hours > max_days:
                 warnings.append(
                     f"{c.name}: {hours} ч физкультуры в неделю, а норма «не два дня подряд» "
