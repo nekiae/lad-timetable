@@ -32,7 +32,7 @@ from lad.excel import to_bytes as excel_bytes  # noqa: E402
 from lad.model import Slot  # noqa: E402
 from lad.solve import PREFERENCES, PRESETS, RULE_SOURCES, RULE_TITLES, Rules, assign_rooms  # noqa: E402
 from lad.storage import lessons_from_dict, lessons_to_dict  # noqa: E402
-from lad.tables import build_school, check_norms, tables_from_dict  # noqa: E402
+from lad.tables import build_school, check_norms, check_plan, tables_from_dict  # noqa: E402
 from lad.quality import measure  # noqa: E402
 from lad.validate import check  # noqa: E402
 
@@ -202,6 +202,13 @@ def check_input(school_id: str) -> dict:
     return {
         "problems": problems,
         "warnings": [] if problems else check_norms(school),
+        # Сверка с типовым учебным планом № 75. Отдельно от норм: это не
+        # нарушение, а вопрос к данным — школа вправе отступать от плана,
+        # но чаще расхождение означает опечатку в тарификации.
+        "plan": [] if problems else check_plan(school),
+        # Что система домыслила за школу при импорте: кабинет наугад, учеников
+        # по умолчанию, деление по двум учителям. Висит, пока не подтвердят.
+        "assumptions": doc.get("assumptions") or [],
         "stats": {"classes": len(school.classes), "teachers": len(school.teachers),
                   "rooms": len(school.rooms),
                   "hours": sum(item.hours_per_week for item in school.load)},
@@ -210,6 +217,14 @@ def check_input(school_id: str) -> dict:
 
 
 # ---------------------------------------------------------------- составление
+
+@app.delete("/api/schools/{school_id}/assumptions")
+def clear_assumptions(school_id: str) -> dict:
+    """«Проверил» — убрать список предположений из данных школы."""
+    doc, _ = _load(school_id)
+    doc.pop("assumptions", None)
+    return {"revision": db.save_school(school_id, doc)}
+
 
 @app.get("/api/rules")
 def rules() -> dict:

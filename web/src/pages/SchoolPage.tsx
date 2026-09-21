@@ -174,6 +174,37 @@ export function SchoolPage() {
         </Notice>
       )}
 
+      {/* Что система домыслила за школу при импорте. Висит до подтверждения:
+          раньше этот список показывался один раз и исчезал, а всплывал потом —
+          когда расписание не сходилось. */}
+      {check && check.assumptions?.length > 0 && (
+        <Notice tone="worse" title="Мы прочитали ваши данные так" className="mt-6">
+          <ul className="list-disc space-y-1 pl-5">
+            {check.assumptions.map((w) => <li key={w}>{w}</li>)}
+          </ul>
+          <Button className="mt-3" onClick={async () => {
+            await api.clearAssumptions(id);
+            setCheck(await api.check(id));
+          }}>Проверил</Button>
+        </Notice>
+      )}
+
+      {/* Расхождения с типовым планом. Не мешают составить расписание, но почти
+          всегда означают опечатку в нагрузке: тарификацию верстают поверх
+          прошлогодней, и часы съезжают вместе с параллелью. */}
+      {check && check.plan?.length > 0 && (
+        <Notice tone="worse" title="Часы расходятся с типовым учебным планом" className="mt-6">
+          <ul className="list-disc space-y-1 pl-5">
+            {check.plan.slice(0, 12).map((w) => <li key={w}>{w}</li>)}
+          </ul>
+          {check.plan.length > 12 && <p className="mt-2 text-pencil">и ещё {check.plan.length - 12}</p>}
+          <p className="mt-2 text-pencil">
+            Школа вправе отступать от плана, и расписание составится в любом случае.
+            Но чаще это опечатка в нагрузке — проверьте эти строки.
+          </p>
+        </Notice>
+      )}
+
       {/* Пока идёт поиск, настройки сворачиваются в строку: иначе живой показ
           уходит ниже первого экрана, а смотреть надо именно на него. */}
       {running ? (

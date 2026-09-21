@@ -43,6 +43,7 @@ class Weights:
     """
 
     teacher_gap: int = 10  # SOFT-1: окно у учителя
+    teacher_both_shifts: int = 12  # день в школе от первой смены до второй
     teacher_day: int = 3  # SOFT-3: каждый день присутствия учителя в школе
     class_imbalance: int = 2  # SOFT-5: разброс нагрузки класса по дням (в уроках)
     difficulty_imbalance: int = 4  # п. 88.2 СанПиН: разброс по БАЛЛАМ трудности
@@ -668,19 +669,24 @@ def _solve(
     for (class_id, subject_id), indices in splits.items():
         if len(indices) < 2:
             continue
-        hours = {school.load[i].hours_per_week for i in indices}
-        if len(hours) > 1:
-            # У подгрупп разное число часов — синхронизировать нечем.
-            # Это не наш баг, а особенность данных школы: сообщаем и пропускаем.
-            print(
-                f"  ⚠️  {class_id}/{subject_id}: у подгрупп разное число часов {sorted(hours)}"
-                " — синхронность не наложена"
-            )
+        by_part: dict[str, list[int]] = defaultdict(list)
+        for i in indices:
+            by_part[school.group(school.load[i].group_id).part or ""].append(i)
+        if len(by_part) < 2 or any(len(v) > 1 for v in by_part.values()):
             continue
-        first, *rest = indices
+        # Подгруппы с РАЗНЫМ числом часов синхронизируются частично: уроки
+        # меньшей группы обязаны попадать в часы большей. Профильная группа
+        # берёт математику шесть часов, базовая четыре — и эти четыре стоят
+        # внутри тех шести, а не в отдельных уроках. Иначе класс занимает
+        # десять мест вместо шести, а у базовой группы появляются дыры,
+        # которых никто не видит (найдено 21.09.2026 на Жемчужненской).
+        # Требование «меньшая ⊆ большей» даёт и равенство, когда часы равны.
+        ranked = sorted((v[0] for v in by_part.values()),
+                        key=lambda i: school.load[i].hours_per_week, reverse=True)
+        base, *rest = ranked
         for other in rest:
             for slot in slots:
-                model.Add(x[first, slot] == x[other, slot])
+                model.Add(x[other, slot] <= x[base, slot])
 
     # --- HARD-8: у класса нет окон — класс учится подряд с первого урока.
     # Заводим отдельную переменную busy[класс, слот] = «класс чем-то занят».
@@ -814,57 +820,105 @@ def _solve(
     # ⚠️ Наивная версия «если занят сосед слева и справа, то занят и здесь»
     # НЕ РАБОТАЕТ: она затыкает дыру в один урок, но пропускает дыру в два подряд.
     # Проверено 22.08.2026 — солвер считал окна нулём, метрика видела 14.
+    # СМЕНЫ. Окно считается ВНУТРИ смены, а не сквозь весь день. Учитель
+    # с уроком на 2-м (первая смена) и на 10-м (вторая) сидит не «семь часов
+    # без дела»: между сменами он уходит. Сквозной подсчёт давал ему семь окон,
+    # солвер бросался их лечить и ломал всё остальное — на Жемчужненской это
+    # стоило сотни окон вместо семидесяти (21.09.2026).
+    # Настоящая цена тут другая — «пришёл к восьми, ушёл в семь вечера», —
+    # и она берётся отдельным штрафом teacher_both_shifts, один раз за день.
+    shift_of_class = {c.id: int(c.shift) for c in school.classes}
+    windows_by_shift = {sh: school.window(Shift(sh)) for sh in set(shift_of_class.values())}
+    several_shifts = len(windows_by_shift) > 1
+
+    def rows_of_shift(indices: list[int], sh: int) -> list[int]:
+        if not several_shifts:
+            return indices
+        return [i for i in indices
+                if any(shift_of_class.get(cid) == sh
+                       for cid in school.group(school.load[i].group_id).class_ids)]
+
     for teacher_id, indices in by_teacher.items():
         for day in days:
-            periods = list(range(1, school.periods_per_day + 1))
+          works_in_shift = {}
+          day_gaps = []
+          for sh, (win_from, win_to) in sorted(windows_by_shift.items()):
+            mine = rows_of_shift(indices, sh)
+            if not mine:
+                continue
+            periods = list(range(win_from, win_to + 1))
+            tag = f"{teacher_id}_{day}_см{sh}"
             t_busy, started, rest, present = {}, {}, {}, {}
             for period in periods:
                 slot = Slot(day, period, shift)
-                busy_var = model.NewBoolVar(f"tb_{teacher_id}_{slot}")
-                model.AddMaxEquality(busy_var, [x[i, slot] for i in indices])
+                busy_var = model.NewBoolVar(f"tb_{tag}_{period}")
+                model.AddMaxEquality(busy_var, [x[i, slot] for i in mine])
                 t_busy[period] = busy_var
-                started[period] = model.NewBoolVar(f"st_{teacher_id}_{slot}")
-                rest[period] = model.NewBoolVar(f"rs_{teacher_id}_{slot}")
-                present[period] = model.NewBoolVar(f"pres_{teacher_id}_{slot}")
+                started[period] = model.NewBoolVar(f"st_{tag}_{period}")
+                rest[period] = model.NewBoolVar(f"rs_{tag}_{period}")
+                present[period] = model.NewBoolVar(f"pres_{tag}_{period}")
 
             for period in periods:
                 model.Add(started[period] >= t_busy[period])
                 model.Add(rest[period] >= t_busy[period])
-                if period > 1:
+                if period > win_from:
                     model.Add(started[period] >= started[period - 1])
-                if period < school.periods_per_day:
+                if period < win_to:
                     model.Add(rest[period] >= rest[period + 1])
                 # в школе = начал и ещё не закончил
                 model.Add(present[period] >= started[period] + rest[period] - 1)
 
-            works = model.NewBoolVar(f"works_{teacher_id}_{day}")
+            works = model.NewBoolVar(f"works_{tag}")
             for period in periods:
                 model.Add(works >= t_busy[period])
+            works_in_shift[sh] = (works, t_busy)
 
-            # Потолок дневной нагрузки, если завуч его задал. Без него система,
-            # экономя учителю выходы в школу, может собрать ему восемь уроков
-            # подряд — а это тяжелее, чем лишний день.
-            cap = teacher_by_id[teacher_id].max_per_day
-            if cap:
-                model.Add(sum(x[i, Slot(day, period, shift)]
-                              for i in indices for period in periods) <= cap)
-
-            gaps = model.NewIntVar(0, school.periods_per_day, f"gaps_{teacher_id}_{day}")
+            gaps = model.NewIntVar(0, win_to - win_from + 1, f"gaps_{tag}")
             model.Add(gaps == sum(present.values()) - sum(t_busy.values()))
-
             penalties.append((gaps, w.teacher_gap))
-            penalties.append((works, w.teacher_day))  # SOFT-3: меньше дней в школе
             trackers["Окна у учителей"].append(gaps)
-            trackers["Выходы в школу"].append(works)
+            day_gaps.append(gaps)
 
-            # Выход в школу ради одного урока. single ≥ 2·works − уроков:
-            # 0 уроков → 0, 1 урок → 1, два и больше → не больше нуля. Ограничено
-            # только снизу — штраф сам опустит переменную, где урок не один.
-            if single_weight:
-                single = model.NewBoolVar(f"single_{teacher_id}_{day}")
-                model.Add(single >= 2 * works - sum(t_busy.values()))
-                penalties.append((single, single_weight))
-                trackers["Дней ради одного урока"].append(single)
+          if not works_in_shift:
+            continue
+
+          # Потолок дневной нагрузки — на ДЕНЬ целиком, а не на смену:
+          # восемь уроков подряд тяжелы независимо от того, в какую смену они
+          # стоят. Без потолка система, экономя учителю выходы в школу,
+          # соберёт ему полный день.
+          cap = teacher_by_id[teacher_id].max_per_day
+          if cap:
+              model.Add(sum(x[i, Slot(day, period, shift)] for i in indices
+                            for period in range(1, school.periods_per_day + 1)) <= cap)
+
+          # День в школе — один, даже если учитель работал в обеих сменах.
+          day_busy = [v for _, busy in works_in_shift.values() for v in busy.values()]
+          works_day = model.NewBoolVar(f"worksday_{teacher_id}_{day}")
+          for var in day_busy:
+              model.Add(works_day >= var)
+          penalties.append((works_day, w.teacher_day))  # SOFT-3: меньше дней в школе
+          trackers["Выходы в школу"].append(works_day)
+
+          # Работа в обе смены: пришёл к восьми, ушёл в семь вечера. Это не
+          # окна (между сменами учитель уходит), но и не бесплатно, поэтому
+          # штраф отдельный и берётся один раз за день.
+          if len(works_in_shift) > 1:
+              both = model.NewBoolVar(f"both_{teacher_id}_{day}")
+              for works, _ in works_in_shift.values():
+                  model.Add(both <= works)
+              model.Add(both >= sum(works for works, _ in works_in_shift.values())
+                        - len(works_in_shift) + 1)
+              penalties.append((both, w.teacher_both_shifts))
+              trackers["Дней в обе смены"].append(both)
+
+          # Выход в школу ради одного урока. single ≥ 2·works − уроков:
+          # 0 уроков → 0, 1 урок → 1, два и больше → не больше нуля. Ограничено
+          # только снизу — штраф сам опустит переменную, где урок не один.
+          if single_weight:
+              single = model.NewBoolVar(f"single_{teacher_id}_{day}")
+              model.Add(single >= 2 * works_day - sum(day_busy))
+              penalties.append((single, single_weight))
+              trackers["Дней ради одного урока"].append(single)
 
     # --- SOFT-5 + коридор дня: равномерная нагрузка класса по дням.
     #
@@ -944,6 +998,25 @@ def _solve(
     parallels = {c.id: c.parallel for c in school.classes}
     subject_names = {s.id: s.name for s in school.subjects}
 
+    # Представитель деления: подгруппы стоят в одних и тех же часах, поэтому
+    # штраф за «предмет в соседние дни», «трудный предмет поздно» и прочее
+    # берётся ОДИН раз — по строке с наибольшим числом часов (её слоты
+    # покрывают слоты остальных, см. HARD-9). Раньше представителем считалась
+    # подгруппа с именем «1», и все деления с осмысленными именами — «мальчики»,
+    # «базовая» — выпадали из этих штрафов целиком (21.09.2026).
+    representative: set[int] = set()
+    best_of_split: dict[tuple[tuple[str, ...], str], int] = {}
+    for i, item in enumerate(school.load):
+        group = school.group(item.group_id)
+        if group.part is None:
+            representative.add(i)
+            continue
+        key = (tuple(group.class_ids), item.subject_id)
+        current = best_of_split.get(key)
+        if current is None or item.hours_per_week > school.load[current].hours_per_week:
+            best_of_split[key] = i
+    representative.update(best_of_split.values())
+
     # --- Разнесённость предмета по неделе (не норма — логика, lad/quality.py).
     # Предмет на 2–3 часа в соседние дни: литература в понедельник и сразу
     # во вторник — к завтрашнему уроку не подготовить домашнее. Предметам на
@@ -952,7 +1025,7 @@ def _solve(
     if spacing_weight:
         for i, item in enumerate(school.load):
             group = school.group(item.group_id)
-            if item.hours_per_week not in (2, 3) or group.part not in (None, "1"):
+            if item.hours_per_week not in (2, 3) or i not in representative:
                 continue
             on_day = {}
             for day in days:
@@ -973,8 +1046,8 @@ def _solve(
         always_pair = {s.id: s.always_double for s in school.subjects}
         for i, item in enumerate(school.load):
             group = school.group(item.group_id)
-            if group.part not in (None, "1"):
-                continue  # подгруппа «2» стоит синхронно с «1» — штраф один раз
+            if i not in representative:
+                continue  # подгруппы стоят в одни часы — штраф один раз
             name = subject_names.get(item.subject_id, "")
             parallel = max((parallels.get(c, 0) for c in group.class_ids), default=0)
             if w.late_hard and school.norms.is_hard_subject(name) and parallel in school.norms.hard_parallels:

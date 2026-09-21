@@ -303,7 +303,8 @@ def apply(tables: dict[str, pd.DataFrame], records: list[dict], mode: str) -> tu
                          key=lambda n: (int(re.match(r"\d+", n).group()), n))
     new_subjects = sorted({r["предмет"] for r in records} - names("subjects", "предмет"))
     new_teachers = sorted({r["учитель"] for r in records if r["учитель"]} - names("teachers", "ФИО"))
-    add("classes", [{"класс": n, "учеников": 24, "повышенный уровень": False} for n in new_classes])
+    add("classes", [{"класс": n, "учеников": 24, "смена": "1", "повышенный уровень": False}
+                    for n in new_classes])
     add("subjects", [{"предмет": n, "кабинет": plan_rooms.get(n, "обычный"),
                       "только в нём": ROOM_KINDS.get(plan_rooms.get(n, "обычный")) in STRICT_ROOM_KINDS,
                       "всегда парой": False} for n in new_subjects])

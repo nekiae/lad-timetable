@@ -579,6 +579,31 @@ def check_norms(school: School) -> list[str]:
                 f"({level}, типовой учебный план, постановление Минобразования № 75)"
             )
 
+    # Деление, где у групп разное число часов: профильная математика шесть
+    # часов, базовая четыре. Солвер поставит четыре урока базовой группы
+    # внутрь шести профильной, а в оставшиеся два часа половина класса
+    # свободна. Это не ошибка расписания, но завуч должен знать: этими двумя
+    # часами кто-то должен заняться.
+    subject_name_by_id = {s.id: s.name for s in school.subjects}
+    uneven: dict[tuple[str, str], dict[str, int]] = {}
+    for item in school.load:
+        group = school.group(item.group_id)
+        if group.part is None or len(group.class_ids) != 1:
+            continue
+        key = (group.class_ids[0], item.subject_id)
+        uneven.setdefault(key, {})[group.part] = item.hours_per_week
+    for (class_id, subject_id), by_part in sorted(uneven.items()):
+        hours = sorted(set(by_part.values()))
+        if len(hours) < 2:
+            continue
+        name = subject_name_by_id.get(subject_id, subject_id)
+        pairs = ", ".join(f"{part} — {h} ч" for part, h in sorted(by_part.items()))
+        warnings.append(
+            f"{class_id}, «{name}»: у групп разное число часов ({pairs}). "
+            f"Уроки меньшей группы встанут внутрь часов большей, а оставшиеся "
+            f"{hours[-1] - hours[0]} ч она свободна — проверьте, чем она занята"
+        )
+
     # Физкультура: норма «не два дня подряд» (п. 94 ССЭТ) сама ограничивает
     # число часов. В пятидневку без двух дней подряд помещается максимум три
     # занятия — понедельник, среда, пятница. Класс с четырьмя часами (а такие
@@ -732,6 +757,97 @@ def load_plan() -> dict:
     if not PLAN_FILE.exists():
         return {"subjects": []}
     return json.loads(PLAN_FILE.read_text(encoding="utf-8"))
+
+
+# Как предметы школы называются в типовом плане. Школа пишет «Английский
+# язык», план — «Иностранный язык»; школа «МХК», план — «Искусство…».
+PLAN_ALIASES = {
+    "английский язык": "Иностранный язык", "немецкий язык": "Иностранный язык",
+    "французский язык": "Иностранный язык", "испанский язык": "Иностранный язык",
+    "китайский язык": "Иностранный язык",
+    "мхк": "Искусство (отечественная и мировая художественная культура)",
+    "искусство": "Искусство (отечественная и мировая художественная культура)",
+    "обж": "Основы безопасности жизнедеятельности",
+    "физкультура": "Физическая культура и здоровье",
+    "труд": "Трудовое обучение",
+    "допризывная подготовка": "Допризывная и медицинская подготовка",
+    "медицинская подготовка": "Допризывная и медицинская подготовка",
+}
+# «История» одной строкой: в V–IX это два предмета плана, в X–XI один.
+HISTORY_PARTS = ("Всемирная история", "История Беларуси",
+                 "История Беларуси в контексте всемирной истории")
+
+
+def plan_hours_for(plan: dict, subject: str, parallel: int, advanced: bool) -> int | None:
+    """Сколько часов этого предмета в этой параллели по типовому плану."""
+    name = PLAN_ALIASES.get(subject.strip().lower(), subject.strip())
+    if name.strip().lower() == "история":
+        parts = [plan_hours_for(plan, part, parallel, advanced) for part in HISTORY_PARTS]
+        total = sum(p for p in parts if p)
+        return total or None
+    entry = next((s for s in plan.get("subjects", []) if s["name"] == name), None)
+    if entry is None:
+        return None
+    key = str(parallel)
+    if advanced and entry.get("hours_advanced", {}).get(key):
+        return entry["hours_advanced"][key]
+    return entry.get("hours", {}).get(key)
+
+
+def check_plan(school: School) -> list[str]:
+    """Где нагрузка расходится с типовым учебным планом № 75.
+
+    Не ошибка: школа вправе отступать, и в X–XI часы профильных предметов
+    определяет сама. Но именно эта сверка вскрывает следы копипасты
+    в тарификации, которую верстают поверх прошлогодней. На комплектовании
+    Жемчужненской она нашла историю в пять часов вместо двух, русский
+    в пять вместо четырёх и биологию в четыре вместо одного (21.09.2026).
+
+    Часы считаются как УРОКИ класса: подгруппы идут в один час, поэтому
+    у делёного предмета берётся большая группа, а часы, которые класс
+    берёт целиком, добавляются к ней.
+    """
+    plan = load_plan()
+    if not plan.get("subjects"):
+        return []
+    names = {s.id: s.name for s in school.subjects}
+    parallel_by_class = {c.id: c.parallel for c in school.classes}
+    seen: dict[tuple[str, str], dict[str, float]] = {}
+    levels: dict[tuple[str, str], bool] = {}
+    for item in school.load:
+        if item.kind != LessonKind.REGULAR:
+            continue
+        group = school.group(item.group_id)
+        if len(group.class_ids) != 1:
+            continue  # межклассная группа: к плану одного класса не свести
+        key = (group.class_ids[0], item.subject_id)
+        seen.setdefault(key, {})
+        part = group.part or ""
+        seen[key][part] = seen[key].get(part, 0) + item.hours_per_week
+        if item.level != Level.BASE:
+            levels[key] = True
+
+    out = []
+    for (class_id, subject_id), by_part in sorted(seen.items()):
+        whole = by_part.get("", 0)
+        parts = [v for k, v in by_part.items() if k]
+        hours = whole + (max(parts) if parts else 0)
+        # Повышенный уровень — свойство ПРЕДМЕТА, а не класса: в профильном
+        # классе профильных предметов два-три, остальные идут базовыми часами.
+        advanced = levels.get((class_id, subject_id), False)
+        parallel = parallel_by_class.get(class_id)
+        name = names.get(subject_id, subject_id)
+        want = plan_hours_for(plan, name, parallel, advanced)
+        if want is None:
+            continue
+        # Часы повышенного уровня в V–IX план не задаёт — школа решает сама.
+        if advanced and want == plan_hours_for(plan, name, parallel, False):
+            continue
+        if abs(hours - want) > 0.01:
+            out.append(f"{class_id}, «{name}»: {hours:g} "
+                       f"{plural(round(hours), 'час', 'часа', 'часов')}, "
+                       f"а по типовому плану {want}")
+    return out
 
 
 def generate_classes(counts: dict[int, int], sizes: dict[int, int] | None = None

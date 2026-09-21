@@ -313,10 +313,15 @@ export const api = {
     call<{
       problems: string[];
       warnings: string[];
+      /** Расхождения с типовым учебным планом № 75 — вопросы к данным, не нормы. */
+      plan: string[];
+      /** Что система домыслила при импорте и что стоит подтвердить. */
+      assumptions: string[];
       stats: Record<string, number>;
       /** Спортзалы: уроков физкультуры в неделю и мест в залах за один урок. */
       pe: { hours: number; gyms: number; seats: number; periods: number; days: number };
     }>("GET", `/schools/${id}/check`),
+  clearAssumptions: (id: string) => call<{ revision: number }>("DELETE", `/schools/${id}/assumptions`),
   input: (id: string) => call<InputState>("GET", `/schools/${id}/input`),
   generateClasses: (id: string, counts: Record<string, number>, sizes: Record<string, number>) =>
     call<Saved & { added: number }>("POST", `/schools/${id}/classes/generate`, { counts, sizes }),

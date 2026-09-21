@@ -31,6 +31,7 @@ class Report:
     class_gaps: int = 0  # окна у классов
     teacher_gaps: int = 0  # окна у учителей
     teacher_days: int = 0  # суммарно выходов учителей в школу за неделю
+    teacher_both_shifts: int = 0  # дней, когда учитель работает и в первую, и во вторую смену
     class_spread: int = 0  # разброс нагрузки класса по дням, в уроках
     shortest_day: int = 0  # самый короткий учебный день по школе, в уроках
     difficulty_spread: int | None = None  # разброс по баллам трудности (п. 88.2)
@@ -61,6 +62,7 @@ class Report:
             "Окон у учителей": self.teacher_gaps,
             "Окон у классов": self.class_gaps,
             "Выходов учителей в школу": self.teacher_days,
+            "Дней в обе смены": self.teacher_both_shifts,
             "Разброс нагрузки по дням": self.class_spread,
             "Самый короткий день": self.shortest_day,
             **({"Разброс по трудности (п. 88.2)": self.difficulty_spread}
@@ -74,7 +76,9 @@ def check(school: School, lessons: list[Lesson]) -> Report:
     report = Report(lessons_total=len(lessons))
 
     class_busy: dict[tuple[str, int], set[int]] = defaultdict(set)
-    teacher_busy: dict[tuple[str, int], set[int]] = defaultdict(set)
+    teacher_busy: dict[tuple[str, int, int], set[int]] = defaultdict(set)
+    teacher_shifts: dict[tuple[str, int], set[int]] = defaultdict(set)
+    shift_of_class = {c.id: int(c.shift) for c in school.classes}
 
     # --- занятость + поиск конфликтов
     teacher_slots: dict[tuple[str, object], list[Lesson]] = defaultdict(list)
@@ -88,7 +92,14 @@ def check(school: School, lessons: list[Lesson]) -> Report:
         for class_id in school.group(lesson.group_id).class_ids:
             class_slots[class_id, lesson.slot].append(lesson)
             class_busy[class_id, lesson.slot.day].add(lesson.slot.period)
-        teacher_busy[lesson.teacher_id, lesson.slot.day].add(lesson.slot.period)
+        # Окна учителя считаются ВНУТРИ смены: ключ — (учитель, день, смена).
+        # Урок на втором и урок на двенадцатом — это не десять часов ожидания,
+        # а два прихода в школу; между сменами учитель уходит. Сквозной счёт
+        # завышал окна втрое на школе с двумя сменами (21.09.2026).
+        lesson_shift = max((shift_of_class.get(cid, 1)
+                            for cid in school.group(lesson.group_id).class_ids), default=1)
+        teacher_busy[lesson.teacher_id, lesson.slot.day, lesson_shift].add(lesson.slot.period)
+        teacher_shifts[lesson.teacher_id, lesson.slot.day].add(lesson_shift)
 
     names = {t.id: t.name for t in school.teachers}
 
@@ -137,7 +148,9 @@ def check(school: School, lessons: list[Lesson]) -> Report:
         report.class_gaps += len(set(range(first, max(periods) + 1)) - periods)
     for periods in teacher_busy.values():
         report.teacher_gaps += len(set(range(min(periods), max(periods) + 1)) - periods)
-    report.teacher_days = len(teacher_busy)
+    # Выход в школу — один на день, даже если учитель работал в обе смены.
+    report.teacher_days = len(teacher_shifts)
+    report.teacher_both_shifts = sum(1 for shifts in teacher_shifts.values() if len(shifts) > 1)
 
     # HARD-8: окно у класса — это нарушение, а не просто метрика
     for (class_id, day), periods in class_busy.items():

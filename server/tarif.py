@@ -72,9 +72,15 @@ def apply_file(school_id: str, body: TarifBody) -> dict:
     if not result["records"]:
         raise HTTPException(422, "Из файла не получилось ни одной строки нагрузки — проверьте, какие колонки выбраны")
     tables, created = apply(tables, result["records"], "add" if body.mode == "add" else "replace")
+    checks = _checks(tables, created, result)
+    # Предположения переживают импорт. Раньше этот список показывался один раз,
+    # сразу после загрузки файла, и исчезал — а всплывал он потом, когда
+    # расписание не сходилось. Теперь он лежит в данных школы и висит
+    # на «Составлении», пока завуч не скажет «проверил».
+    doc["assumptions"] = [c["text"] for c in checks]
     return _save(school_id, doc, tables, tarif={"rows": len(result["records"]), **created,
                                                 "skipped_total": len(result["skipped"]), "split": result["split"],
-                                                "checks": _checks(tables, created, result)})
+                                                "checks": checks})
 
 
 def _checks(tables, created: dict, result: dict) -> list[dict]:
