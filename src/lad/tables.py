@@ -261,7 +261,8 @@ def school_groups_class_ids(groups: dict, group_id: str) -> list[str]:
 
 
 def build_school(tables: dict[str, pd.DataFrame], settings: dict,
-                 wishes: dict | None = None) -> tuple[School, list[str]]:
+                 wishes: dict | None = None,
+                 targeted: list[dict] | None = None) -> tuple[School, list[str]]:
     """Собрать School из таблиц. Возвращает школу и список проблем ввода."""
     problems: list[str] = []
     wishes = wishes or {}
@@ -460,12 +461,44 @@ def build_school(tables: dict[str, pd.DataFrame], settings: dict,
                                                   item.hours_per_week)
         hours += sum(by_subject.values())
         start, end = school.window(c.shift)
-        mine_slots = (end - start + 1) * lesson_days
+        # Адресные пожелания-числа сужают сетку класса: потолок уроков в день
+        # и «заканчивать не позже» — это меньше мест, чем в смене. Проверяем
+        # здесь, а не отдаём завучу пустой экран: он сам поставил это число
+        # и должен услышать, что с ним расписания не существует.
+        limit_note = ""
+        per_day_cap = end - start + 1
+        for row in (targeted or []):
+            scope, who = row.get("scope"), str(row.get("who") or "").strip()
+            if scope == "class" and who != c.name:
+                continue
+            if scope == "parallel" and who != str(c.parallel):
+                continue
+            if scope not in ("school", "parallel", "class"):
+                continue
+            if row.get("key") not in ("max_lessons_per_day", "end_by"):
+                continue
+            # У правил значение — слово («жёстко»), у чисел — число.
+            # Смешивать их в одном списке можно, а складывать нельзя.
+            try:
+                number = int(row.get("value") or 0)
+            except (TypeError, ValueError):
+                continue
+            if row.get("key") == "max_lessons_per_day" and number:
+                if number < per_day_cap:
+                    per_day_cap, limit_note = number, f"вы задали не больше {number} уроков в день"
+            if row.get("key") == "end_by" and number:
+                if number < per_day_cap:
+                    per_day_cap, limit_note = number, f"вы задали «заканчивать не позже {number}-го урока»"
+        mine_slots = per_day_cap * lesson_days
         if hours > mine_slots:
-            per_day = end - start + 1
-            where = ("" if mine_slots == slots_per_week
-                     else f", а вторая смена учится {per_day} "
-                          f"{plural(per_day, 'урок', 'урока', 'уроков')} в день")
+            per_day = per_day_cap
+            if limit_note:
+                where = f", а {limit_note}"
+            elif mine_slots == slots_per_week:
+                where = ""
+            else:
+                where = (f", а вторая смена учится {per_day} "
+                         f"{plural(per_day, 'урок', 'урока', 'уроков')} в день")
             problems.append(
                 f"у класса {c.name} {hours} "
                 f"{plural(hours, 'урок', 'урока', 'уроков')} в неделю "

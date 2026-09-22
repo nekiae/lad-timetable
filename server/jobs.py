@@ -37,7 +37,7 @@ def _worker(doc: dict, options: dict, events, stop_flag) -> None:
         from lad.tables import build_school, tables_from_dict
 
         school, problems = build_school(tables_from_dict(doc), doc.get("settings") or {},
-                                        doc.get("wishes"))
+                                        doc.get("wishes"), doc.get("targeted"))
         if problems:
             events.put({"type": "problems", "problems": problems})
             return

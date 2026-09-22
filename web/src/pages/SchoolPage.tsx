@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { TargetedPrefs, type Aim } from "./TargetedPrefs";
+import { TargetedPrefs, type Aim, type Choice as AimKind } from "./TargetedPrefs";
 
 import { api, type Doc, type Progress, type SearchSetup, type SolveDone } from "../api";
 import { Button, ButtonLink, Choice, Notice, Segmented, cx } from "../ui";
@@ -22,6 +22,8 @@ export function SchoolPage() {
   const [presets, setPresets] = useState<{ name: string; about: string }[]>([]);
   const [rules, setRules] = useState<{ key: string; title: string; source: string | null; default: string }[]>([]);
   const [preferences, setPreferences] = useState<{ key: string; group: string; title: string; about: string; default: number }[]>([]);
+  // Адресные пожелания-числа (потолок уроков в день и т. п.) — из справочника сервера.
+  const [aimKinds, setAimKinds] = useState<AimKind[]>([]);
   // Предпочтения школы: уровень 0–3 по каждому и какой день короткий. Хранятся
   // в данных школы (settings.prefs), как и строгость норм.
   const [prefs, setPrefs] = useState<Record<string, number>>({});
@@ -52,6 +54,7 @@ export function SchoolPage() {
       setPresets(r.presets);
       setRules(r.rules);
       setPreferences(r.preferences);
+      setAimKinds((r.aims ?? []) as AimKind[]);
     });
     api.school(id).then((s) => {
       setDoc(s.doc);
@@ -301,8 +304,10 @@ export function SchoolPage() {
           <TargetedPrefs
             id={id} doc={doc} aims={aims} onChange={setAims}
             choices={[
+              ...aimKinds,
               ...rules.map((r) => ({ key: r.key, title: r.title, kind: "rule" as const })),
-              ...preferences.map((p) => ({ key: p.key, title: p.title, kind: "level" as const })),
+              ...preferences.map((p) => ({ key: p.key, title: p.title, kind: "level" as const,
+                                           about: p.about })),
             ]}
           />
         </details>

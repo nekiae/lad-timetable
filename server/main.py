@@ -30,7 +30,8 @@ from .whatif import router as whatif_router
 from lad import explain, substitute  # noqa: E402
 from lad.excel import to_bytes as excel_bytes  # noqa: E402
 from lad.model import Slot  # noqa: E402
-from lad.solve import PREFERENCES, PRESETS, RULE_SOURCES, RULE_TITLES, Rules, assign_rooms  # noqa: E402
+from lad.solve import (AIMS, PREFERENCES, PRESETS, RULE_SOURCES, RULE_TITLES,  # noqa: E402
+                       Rules, assign_rooms)
 from lad.storage import lessons_from_dict, lessons_to_dict  # noqa: E402
 from lad.tables import build_school, check_norms, check_plan, tables_from_dict  # noqa: E402
 from lad.quality import measure  # noqa: E402
@@ -84,7 +85,8 @@ def _load(school_id: str) -> tuple[dict, int]:
 
 
 def _build(doc: dict):
-    return build_school(tables_from_dict(doc), doc.get("settings") or {}, doc.get("wishes"))
+    return build_school(tables_from_dict(doc), doc.get("settings") or {}, doc.get("wishes"),
+                        doc.get("targeted"))
 
 
 def _report_dict(report) -> dict:
@@ -247,6 +249,9 @@ def rules() -> dict:
                    "default": getattr(defaults, key)} for key, title in RULE_TITLES.items()],
         "presets": [{"name": name, "about": value["about"]} for name, value in PRESETS.items()],
         "preferences": [{k: p[k] for k in ("key", "group", "title", "about", "default")} for p in PREFERENCES],
+        # Адресные пожелания-числа: «не больше шести уроков в день»,
+        # «информатика не в понедельник». У них не «насколько важно», а величина.
+        "aims": AIMS,
     }
 
 

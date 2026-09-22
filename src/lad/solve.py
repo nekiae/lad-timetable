@@ -65,7 +65,32 @@ class Weights:
 
 # Кому адресовано пожелание. Частное перебивает общее: правило для 11«А»
 # сильнее правила для всех одиннадцатых, а оно — сильнее правила для школы.
-SCOPE_RANK = {"school": 0, "parallel": 1, "class": 2, "teacher": 2}
+SCOPE_RANK = {"school": 0, "parallel": 1, "class": 2, "teacher": 2, "subject": 2}
+
+# Адресные пожелания-числа: те, у которых значение не «насколько важно»,
+# а величина — «не больше шести уроков в день», «не позже седьмого».
+# Они жёсткие: число завуч называет тогда, когда оно и правда предел.
+AIMS = [
+    {"key": "max_lessons_per_day", "title": "Не больше уроков в день",
+     "kind": "number", "min": 3, "max": 10, "scopes": ["school", "parallel", "class"],
+     "about": "Потолок для класса. Часы всё равно выданы все, поэтому потолок "
+              "ниже, чем нагрузка позволяет, сделает расписание невозможным."},
+    {"key": "end_by", "title": "Заканчивать не позже урока",
+     "kind": "number", "min": 3, "max": 10, "scopes": ["school", "parallel", "class"],
+     "about": "Номер внутри своей смены: у второй смены шестой урок — это "
+              "последний. Нужно там, где детей ждёт автобус."},
+    {"key": "hard_per_day", "title": "Не больше трудных предметов в день",
+     "kind": "number", "min": 1, "max": 6, "scopes": ["school", "parallel", "class"],
+     "about": "Трудность берётся из ранговой шкалы РБ. Норма этого не требует, "
+              "но завуч обычно держит в голове."},
+    {"key": "subject_not_on_day", "title": "Предмет не в этот день",
+     "kind": "day", "scopes": ["subject"], "repeat": True,
+     "about": "Адресуется предмету: «информатика не в понедельник» — например, "
+              "потому что кабинет занят. Записей можно несколько."},
+    {"key": "teacher_max_in_row", "title": "Учителю не больше уроков подряд",
+     "kind": "number", "min": 2, "max": 8, "scopes": ["school", "teacher"],
+     "about": "Подряд идущие уроки утомляют сильнее, чем то же число вразбивку."},
+]
 
 
 @dataclass
@@ -83,24 +108,37 @@ class Targeted:
 
     rows: list[dict] = field(default_factory=list)
 
-    def value(self, key: str, default, *, class_id: str | None = None,
-              parallel: int | None = None, teacher: str | None = None):
-        """Самое частное правило по этому адресу — или значение по умолчанию."""
-        best, best_rank = default, -1
+    def matching(self, key: str, *, class_id: str | None = None,
+                 parallel: int | None = None, teacher: str | None = None,
+                 subject: str | None = None) -> list[dict]:
+        """Все записи этого пожелания, подходящие по адресу."""
+        out = []
         for row in self.rows:
             if row.get("key") != key:
                 continue
             scope = row.get("scope", "school")
             who = str(row.get("who") or "").strip()
+            if scope not in SCOPE_RANK:
+                continue
             if scope == "class" and who != (class_id or ""):
                 continue
             if scope == "teacher" and who != (teacher or ""):
                 continue
+            if scope == "subject" and who != (subject or ""):
+                continue
             if scope == "parallel" and who != (str(parallel) if parallel else ""):
                 continue
-            if scope not in SCOPE_RANK:
-                continue
-            rank = SCOPE_RANK[scope]
+            out.append(row)
+        return out
+
+    def value(self, key: str, default, *, class_id: str | None = None,
+              parallel: int | None = None, teacher: str | None = None,
+              subject: str | None = None):
+        """Самое частное правило по этому адресу — или значение по умолчанию."""
+        best, best_rank = default, -1
+        for row in self.matching(key, class_id=class_id, parallel=parallel,
+                                 teacher=teacher, subject=subject):
+            rank = SCOPE_RANK[row.get("scope", "school")]
             if rank >= best_rank:
                 best, best_rank = row.get("value", default), rank
         return best
@@ -778,6 +816,61 @@ def _solve(
                     >= busy[class_id, Slot(day, period + 1, shift)]
                 )
 
+    # --- Адресные пожелания-числа, которые касаются всего дня класса.
+    _subject_name = {sub.id: sub.name for sub in school.subjects}
+    # Подгруппы одного деления стоят в один час, поэтому в счёте «сколько
+    # трудных предметов в дне» они считаются один раз — по первой строке.
+    _once: set[int] = set()
+    _seen_split: set[tuple[tuple[str, ...], str]] = set()
+    for i, item in enumerate(school.load):
+        group = school.group(item.group_id)
+        if group.part is None:
+            _once.add(i)
+            continue
+        key = (tuple(group.class_ids), item.subject_id)
+        if key not in _seen_split:
+            _seen_split.add(key)
+            _once.add(i)
+
+    for class_id in whole:
+        win_from, win_to = school.class_window(class_id)
+        parallel = _parallel_of.get(class_id)
+        class_rows = whole[class_id] + [
+            i for (cid, _), v in parts.items() if cid == class_id for i in v
+        ]
+
+        # «Заканчивать не позже N-го урока» — номер внутри СВОЕЙ смены:
+        # у второй смены шестой урок последний, и просить «не позже шестого»
+        # она будет именно так, а не «не позже двенадцатого».
+        end_by = int(aim.value("end_by", 0, class_id=class_id, parallel=parallel) or 0)
+        if end_by:
+            last_allowed = min(win_to, win_from + end_by - 1)
+            for slot in slots:
+                if slot.period > last_allowed:
+                    model.Add(busy[class_id, slot] == 0)
+
+        # «Не больше N трудных предметов в день». Не норма — привычка завуча,
+        # но привычка верная: три трудных подряд ребёнок не тянет.
+        hard_cap = int(aim.value("hard_per_day", 0, class_id=class_id, parallel=parallel) or 0)
+        if hard_cap:
+            hard_rows = [i for i in class_rows
+                         if i in _once and school.norms.is_hard_subject(
+                             _subject_name.get(school.load[i].subject_id, ""))]
+            if hard_rows:
+                for day in {s.day for s in slots}:
+                    model.Add(sum(x[i, s] for i in hard_rows
+                                  for s in slots if s.day == day) <= hard_cap)
+
+    # --- «Предмет не в этот день»: адресуется предмету, а не классу.
+    # «Информатика не в понедельник» — например, потому что кабинет занят.
+    for i, item in enumerate(school.load):
+        name = _subject_name.get(item.subject_id, "")
+        for row in aim.matching("subject_not_on_day", subject=name):
+            day_off = int(row.get("value") or 0)
+            for slot in slots:
+                if slot.day == day_off:
+                    model.Add(x[i, slot] == 0)
+
     # --- HARD-3 и HARD-5: кабинеты.
     # Не назначаем каждому уроку конкретный кабинет — это раздуло бы модель
     # в десятки раз (нагрузка × слоты × кабинеты). Вместо этого ограничиваем
@@ -947,6 +1040,18 @@ def _solve(
           if not works_in_shift:
             continue
 
+          # «Не больше N уроков подряд»: в любом окне из N+1 подряд идущих
+          # уроков у учителя занято не больше N. Подряд идущие уроки утомляют
+          # сильнее, чем то же число вразбивку, и завучи это знают.
+          in_row = int(aim.value("teacher_max_in_row", 0,
+                                 teacher=_teacher_name.get(teacher_id)) or 0)
+          if in_row:
+              periods_all = list(range(1, school.periods_per_day + 1))
+              for start in periods_all[:max(0, len(periods_all) - in_row)]:
+                  window = [Slot(day, p, shift) for p in range(start, start + in_row + 1)]
+                  model.Add(sum(x[i, sl] for i in indices for sl in window
+                                if (i, sl) in x) <= in_row)
+
           # Потолок дневной нагрузки — на ДЕНЬ целиком, а не на смену:
           # восемь уроков подряд тяжелы независимо от того, в какую смену они
           # стоят. Без потолка система, экономя учителю выходы в школу,
@@ -1026,6 +1131,14 @@ def _solve(
             model.Add(extra >= per_day[days.index(light_day_of_week)] - target)
             penalties.append((extra, light_here))
             trackers["Короткий день: лишних уроков"].append(extra)
+
+        # Потолок уроков в день. Жёсткий: число завуч называет тогда, когда
+        # это и правда предел («шестым классам больше шести не ставим»).
+        cap_here = int(aim.value("max_lessons_per_day", 0, class_id=class_id,
+                                 parallel=_parallel_of.get(class_id)) or 0)
+        if cap_here:
+            for count in per_day:
+                model.Add(count <= cap_here)
 
         even_here = crule("even_days", rules.even_days, class_id)
         balance_here = cw("class_imbalance", w.class_imbalance, class_id)

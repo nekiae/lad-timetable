@@ -348,6 +348,9 @@ export const api = {
       presets: { name: string; about: string }[];
       /** Предпочтения школы: уровень 0–3 («не важно» … «очень важно»). */
       preferences: { key: string; group: string; title: string; about: string; default: number }[];
+      /** Адресные пожелания-числа: потолок уроков в день, «предмет не в этот день». */
+      aims: { key: string; title: string; kind: "number" | "day"; about: string;
+              min?: number; max?: number; scopes: string[] }[];
     }>("GET", "/rules"),
   solve: (id: string, body: { budget: number; preset: string; rules?: Record<string, string>;
                                prefs?: Record<string, number>; pinned?: LessonDTO[]; hint?: LessonDTO[];
