@@ -7,6 +7,8 @@ import { useHideNames } from "../hideNames";
 import { Button, ButtonLink, EmptyState, Notice, Panel, Reasons, cx, inputClass, when } from "../ui";
 import { Key, MOD } from "../CommandPalette";
 import { DifficultyMap } from "./DifficultyMap";
+import { FixMenu } from "./FixMenu";
+import type { Aim } from "./TargetedPrefs";
 
 // Короткие названия для клетки сетки: полное «Физическая культура и здоровье»
 // в клетку шириной в класс не помещается. Полное — в подсказке.
@@ -100,6 +102,8 @@ export function SchedulePage() {
   // Закреплённые уроки — ПОЗИЦИИ (урок + клетка), а не номера в массиве:
   // номера меняются после каждой пересборки, а закрепление должно пережить её.
   const [pins, setPins] = useState<LessonDTO[]>([]);
+  // Пожелания школы: «Поправить» их пополняет, а солвер читает при пересборке.
+  const [aims, setAims] = useState<Aim[]>([]);
   const [settings, setSettings] = useState<Record<string, unknown>>({});
   const [rebuild, setRebuild] = useState<{ job: string; started: number; pinsCount: number;
                                            progress?: Progress; stopped?: boolean } | null>(null);
@@ -189,6 +193,9 @@ export function SchedulePage() {
       })
       .catch(() => setSchedule(null));
     api.school(id).then((s) => setSettings(s.doc.settings)).catch(() => undefined);
+    // Пожелания школы нужны здесь, чтобы «Поправить» не предлагал то,
+    // что завуч уже сказал, и показывал это словом «учтено».
+    api.check(id).then((c) => setAims((c.targeted ?? []) as Aim[])).catch(() => undefined);
     refreshVersions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, version]);
@@ -846,10 +853,21 @@ export function SchedulePage() {
                   {dir.days.find((d) => d.n === lessons[selected].day)?.name}, {lessons[selected].period}-й урок
                 </span>
               </span>
-              <Button onClick={() => togglePin(selected)}>
-                {isPinned(lessons[selected]) ? "Открепить" : "Закрепить"}
-              </Button>
+              <span className="flex shrink-0 gap-2">
+                <Button onClick={() => togglePin(selected)}>
+                  {isPinned(lessons[selected]) ? "Открепить" : "Закрепить"}
+                </Button>
+              </span>
             </Panel>
+          )}
+          {selected !== null && !rebuild && (
+            <FixMenu lesson={lessons[selected]} lessons={lessons} dir={dir} aims={aims}
+                     onAdd={async (aim) => {
+                       const next = [...aims, aim];
+                       setAims(next);
+                       await api.saveTargeted(id, next);
+                     }}
+                     onRebuild={() => startRebuild(pins)} />
           )}
           {pins.length > 0 && !rebuild && (
             <Panel as="div" className="text-small">
