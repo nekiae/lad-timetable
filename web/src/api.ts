@@ -93,7 +93,10 @@ export type Change =
   | { kind: "teacher_day_off"; teacher: string; day: number }
   | { kind: "gym_plus" }
   | { kind: "preset"; preset: string }
-  | { kind: "rule"; rule: string; value: string };
+  | { kind: "rule"; rule: string; value: string }
+  /** Пожелание из «Поправить» на готовом расписании. */
+  | { kind: "aim"; aim: { scope: string; who: string; key: string; value: number | string };
+      label: string };
 
 export type ComparisonSide = {
   id: string;
@@ -107,6 +110,9 @@ export type Comparison = {
   change: Change;
   mode: "keep" | "fresh";
   budget: number;
+  /** Круг правки: 0 — точечно, 2 — вся школа. */
+  ring: number;
+  ring_name: string;
   stale: boolean;
   control: ComparisonSide;
   variant: ComparisonSide;
@@ -388,9 +394,10 @@ export const api = {
     fetch(`/api/schools/${id}/substitutions/journal.xlsx?month=${month}`).then(blob),
   printPdf: (id: string, by: "class" | "teacher", anonymize: boolean) =>
     fetch(`/api/schools/${id}/print.pdf?by=${by}&anonymize=${anonymize}`).then(blob),
-  whatIf: (id: string, change: Change, mode: "keep" | "fresh") =>
-    call<{ label: string; budget: number; control: string; variant: string; blocked?: string[] }>(
-      "POST", `/schools/${id}/whatif`, { change, mode }),
+  whatIf: (id: string, change: Change, mode: "keep" | "fresh", ring = 2) =>
+    call<{ label: string; budget: number; control: string; variant: string; blocked?: string[];
+           ring: number; ring_name: string; movable: number; total: number }>(
+      "POST", `/schools/${id}/whatif`, { change, mode, ring }),
   whatIfCompare: (id: string, control: string, variant: string) =>
     call<Comparison>("GET", `/schools/${id}/whatif?control=${control}&variant=${variant}`),
   whatIfApply: (id: string, control: string, variant: string) =>

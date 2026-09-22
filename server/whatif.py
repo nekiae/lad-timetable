@@ -81,7 +81,72 @@ def apply_change(doc: dict, change: dict) -> tuple[dict, str]:
         settings["rules"] = {**(settings.get("rules") or {}), key: value}
         return doc, f"Норма «{RULE_TITLES[key]}» — {STRICT_NAMES[value]}"
 
+    if kind == "aim":
+        # Пожелание с адресом — то, что завуч выбрал в «Поправить» на готовой
+        # сетке. Ложится в данные школы насовсем, поэтому сначала показываем
+        # цену: сколько уроков переедет и что станет хуже.
+        aim = change.get("aim") or {}
+        key = str(aim.get("key") or "")
+        if not key:
+            raise HTTPException(422, "Пожелание без ключа")
+        rows = [row for row in (doc.get("targeted") or [])
+                if not (row.get("key") == key and row.get("scope") == aim.get("scope")
+                        and row.get("who") == aim.get("who"))]
+        doc["targeted"] = [*rows, aim]
+        return doc, str(change.get("label") or "Новое пожелание школы")
+
     raise HTTPException(422, "Неизвестное изменение")
+
+
+# Насколько широко разрешено ворошить сетку. Закреплять уроки руками нельзя:
+# их восемьсот, а жёстко закреплённые полшколы делают задачу нерешаемой.
+# Поэтому круг считает система, и если он тесен — сама расширяет.
+RINGS = ("точечно", "вокруг", "вся школа")
+
+
+def movable(doc: dict, lessons: list[dict], change: dict, ring: int) -> list[dict] | None:
+    """Уроки, которые пересборке разрешено двигать. None — можно все.
+
+    Круг 1: затронутые классы и учителя, которые в них ведут (иначе учитель
+    не сможет подвинуться вслед за своим уроком). Круг 2: волна на шаг дальше —
+    плюс другие классы этих учителей. Круг 3: вся школа.
+    """
+    if ring >= 2:
+        return None
+    classes = _touched_classes(doc, change)
+    if not classes:
+        return None
+    school, _ = build_school(tables_from_dict(doc), doc.get("settings") or {}, doc.get("wishes"),
+                             doc.get("targeted"))
+    of_group = {g.id: set(g.class_ids) for g in school.groups}
+    where = lambda l: of_group.get(l["group_id"], set())  # noqa: E731
+
+    teachers = {l["teacher_id"] for l in lessons if where(l) & classes}
+    if ring >= 1:
+        classes = classes | {c for l in lessons if l["teacher_id"] in teachers for c in where(l)}
+        teachers = teachers | {l["teacher_id"] for l in lessons if where(l) & classes}
+    return [l for l in lessons if where(l) & classes or l["teacher_id"] in teachers]
+
+
+def _touched_classes(doc: dict, change: dict) -> set[str]:
+    """Каких классов касается изменение."""
+    names = [str(c.get("класс", "")).strip() for c in doc["tables"].get("classes", [])]
+    names = [n for n in names if n]
+    aim = change.get("aim") or {}
+    scope, who = aim.get("scope"), str(aim.get("who") or "").strip()
+    if change.get("kind") != "aim" or scope == "school":
+        return set()
+    if scope == "class":
+        return {who}
+    if scope == "parallel":
+        return {n for n in names if n.startswith(who)}
+    if scope == "teacher":
+        return {str(row.get("класс", "")).strip() for row in doc["tables"].get("load", [])
+                if str(row.get("учитель", "")).strip() == who}
+    if scope == "subject":
+        return {str(row.get("класс", "")).strip() for row in doc["tables"].get("load", [])
+                if str(row.get("предмет", "")).strip() == who}
+    return set()
 
 
 def _options(doc: dict, budget: float, hint: list[dict] | None) -> dict:
@@ -98,6 +163,19 @@ def _options(doc: dict, budget: float, hint: list[dict] | None) -> dict:
         # CP-SAT держит в них разные стратегии (см. available_cpus).
         "params": {"num_workers": max(4, available_cpus() // 2)},
     }
+
+
+def input_blockers(doc: dict) -> list[str]:
+    """Проверка ввода для изменённой школы.
+
+    Пожелание-число завуч может назвать невыполнимым: «у 9Г не больше шести
+    уроков» при 32 уроках в неделю — это 30 мест на 32 урока. Проверка ввода
+    это видит и называет причину, а без неё сравнение просто не посчиталось бы
+    и экран остался бы пустым (найдено 22.09.2026).
+    """
+    _, problems = build_school(tables_from_dict(doc), doc.get("settings") or {},
+                               doc.get("wishes"), doc.get("targeted"))
+    return problems[:5]
 
 
 def blockers(doc: dict, change: dict) -> list[str]:
@@ -149,6 +227,7 @@ def blockers(doc: dict, change: dict) -> list[str]:
 class WhatIfRequest(BaseModel):
     change: dict
     mode: str = "keep"  # keep — беречь текущее расписание, fresh — составить с нуля
+    ring: int = 0  # насколько широко ворошим сетку: 0 — точечно, 2 — вся школа
 
 
 @router.post("")
@@ -161,17 +240,33 @@ def start(school_id: str, body: WhatIfRequest) -> dict:
     if base is None:
         raise HTTPException(404, "Сначала составьте расписание: сравнивать не с чем")
     changed, label = apply_change(doc, body.change)
-    blocked = blockers(changed, body.change)
+    blocked = input_blockers(changed) or blockers(changed, body.change)
     if blocked:  # считать нечего: ответ «нельзя» известен сразу, и с причиной
         return {"label": label, "blocked": blocked}
     mode = body.mode if body.mode in BUDGETS else "keep"
     hint = base["lessons"] if mode == "keep" else None
     pair = uuid.uuid4().hex[:12]
+    # Чем шире круг, тем больше работы: точечной правке хватает минуты,
+    # а «всю школу» за минуту успевает только испортить — на Жемчужненской
+    # за 60 с переставлялся каждый четвёртый урок (замер 22.09.2026).
+    budget = BUDGETS[mode] if mode != "keep" else (60, 90, 150)[max(0, min(2, body.ring))]
+
+    # Круг правки. Закреплённые уроки — те, что вне круга; считает их система,
+    # а не завуч пальцем. Круг одинаков для контроля и варианта, иначе
+    # сравнение перестанет быть честным (CLAUDE.md §8.3).
+    ring = max(0, min(2, body.ring))
+    free = movable(doc, base["lessons"], body.change, ring) if mode == "keep" else None
+    pinned = None
+    if free is not None:
+        keys = {(l["group_id"], l["subject_id"], l["day"], l["period"]) for l in free}
+        pinned = [l for l in base["lessons"]
+                  if (l["group_id"], l["subject_id"], l["day"], l["period"]) not in keys]
 
     jobs = {}
     for role, variant_doc in (("control", doc), ("variant", changed)):
         meta = {"change": body.change, "label": label, "role": role, "pair": pair,
-                "mode": mode, "budget": BUDGETS[mode], "base_id": base["id"]}
+                "mode": mode, "budget": budget, "base_id": base["id"],
+                "ring": ring, "movable": len(free) if free is not None else None}
 
         def on_result(job, meta=meta) -> None:
             result = job.result or {}
@@ -180,9 +275,15 @@ def start(school_id: str, body: WhatIfRequest) -> dict:
                     school_id, revision, result["lessons"],
                     {**meta, **{k: result.get(k) for k in ("status", "seconds", "relaxed")}})
 
-        job = start_job(school_id, revision, variant_doc, _options(variant_doc, BUDGETS[mode], hint), on_result)
+        options = _options(variant_doc, budget, hint)
+        if pinned is not None:
+            options["pinned"] = pinned
+        job = start_job(school_id, revision, variant_doc, options, on_result)
         jobs[role] = job.id
-    return {"label": label, "budget": BUDGETS[mode], **jobs}
+    return {"label": label, "budget": budget, "ring": ring,
+            "ring_name": RINGS[ring],
+            "movable": len(free) if free is not None else len(base["lessons"]),
+            "total": len(base["lessons"]), **jobs}
 
 
 def _side(school_id: str, doc: dict, row: dict, base_lessons: list[dict]) -> dict:
@@ -238,6 +339,8 @@ def compare(school_id: str, control: str, variant: str) -> dict:
         "change": meta["change"],
         "mode": meta["mode"],
         "budget": meta["budget"],
+        "ring": meta.get("ring", 2),
+        "ring_name": RINGS[min(2, meta.get("ring", 2))],
         # Данные школы поменялись после расчёта — принимать вариант уже нельзя:
         # его сетка составлена по прежним данным.
         "stale": variant_row["revision_id"] != revision,

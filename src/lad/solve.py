@@ -817,6 +817,10 @@ def _solve(
                     >= busy[class_id, Slot(day, period + 1, shift)]
                 )
 
+    # Штрафы, посчитанные до того, как заведён общий список: мягкий вариант
+    # правила «один предмет в час» живёт здесь, а в penalties попадает ниже.
+    deferred_penalties: list = []
+
     # --- HARD-2б: в один час у класса идёт ОДИН предмет.
     #
     # HARD-2 запрещает классу два урока разом и одной подгруппе — два урока.
@@ -855,7 +859,8 @@ def _solve(
             else:
                 over = model.NewIntVar(0, len(here), f"subover_{class_id}_{slot}")
                 model.Add(over >= sum(here) - 1)
-                penalties.append((over, 40))
+                # Штрафы собираются ниже, поэтому мягкий вариант откладываем.
+                deferred_penalties.append((over, 40))
                 trackers["Два предмета в один час"].append(over)
 
     # --- HARD-8б: лишний час профиля — в конец дня, а не в середину.
@@ -1044,7 +1049,7 @@ def _solve(
     spacing_weight = int(w.subject_spacing if w.subject_spacing is not None else TUNING["subject_spacing"])
     single_weight = int(w.single_lesson_day if w.single_lesson_day is not None else TUNING["single_lesson_day"])
     days = sorted({s.day for s in slots})
-    penalties = []  # (переменная, вес)
+    penalties = list(deferred_penalties)  # (переменная, вес)
     for moved in moved_vars:
         penalties.append((moved, stay_weight))
         trackers["Переставлено уроков"].append(moved)

@@ -17,15 +17,16 @@ const sameAim = (a: Aim, b: Aim) =>
  * в понедельник». Здесь клик по уроку превращается в такое правило — оно
  * ложится в пожелания школы и остаётся там, а не пропадает вместе с ходом.
  */
-export function FixMenu({ lesson, lessons, dir, aims, onAdd, onRebuild }: {
+export function FixMenu({ lesson, lessons, dir, aims, onCheck }: {
   lesson: LessonDTO;
   lessons: LessonDTO[];
   dir: Directory;
   aims: Aim[];
-  onAdd: (aim: Aim) => void;
-  onRebuild: () => void;
+  /** Посчитать цену правки: пожелание и то, как широко можно ворошить сетку. */
+  onCheck: (aim: Aim, text: string, ring: number) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [ring, setRing] = useState(0);
 
   const subject = dir.subjects[lesson.subject_id] ?? "";
   const teacher = dir.teachers[lesson.teacher_id] ?? "";
@@ -87,28 +88,39 @@ export function FixMenu({ lesson, lessons, dir, aims, onAdd, onRebuild }: {
                 onClick={() => setOpen(false)}>скрыть</button>
       </div>
       <p className="mt-1 text-pencil">
-        Это не ход по сетке, а пожелание школы: оно запомнится и будет учитываться
-        при каждом составлении.
+        Это не ход по сетке, а пожелание школы. Сначала покажем цену: сколько уроков
+        переедет и что станет хуже, — и только потом запишем.
       </p>
+      <label className="mt-3 block text-pencil">
+        Насколько можно ворошить расписание:{" "}
+        <select className="rounded border border-rule bg-sheet px-2 py-1 text-ink"
+                value={ring} onChange={(e) => setRing(Number(e.target.value))}>
+          <option value={0}>точечно — только вокруг этой правки</option>
+          <option value={1}>шире — и классы задетых учителей</option>
+          <option value={2}>всю школу</option>
+        </select>
+      </label>
       <ul className="mt-3 space-y-1">
         {fixes.map((fix) => {
           const already = aims.some((a) => sameAim(a, fix.aim));
           return (
             <li key={fix.text}>
-              <button type="button" disabled={already} onClick={() => onAdd(fix.aim)}
+              <button type="button" disabled={already}
+                      onClick={() => onCheck(fix.aim, fix.text, ring)}
                       className={already
                         ? "text-left text-pencil"
                         : "text-left text-pen underline-offset-4 hover:underline"}>
-                {fix.text}{already ? " — учтено" : ""}
+                {fix.text}{already ? " — уже в пожеланиях" : ""}
               </button>
             </li>
           );
         })}
       </ul>
       {added.length > 0 && (
-        <Button variant="primary" className="mt-3" onClick={onRebuild}>
-          Пересобрать с учётом
-        </Button>
+        <p className="mt-3 text-pencil">
+          Отмеченное уже записано в пожелания школы — его можно убрать на экране
+          «Составление».
+        </p>
       )}
     </Panel>
   );

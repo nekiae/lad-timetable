@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { api, type Directory, type LessonDTO, type Logic, type Progress, type Report, type Schedule, type ScheduleVersion,
          type Verdict } from "../api";
@@ -86,6 +86,7 @@ type Snapshot = { lessons: LessonDTO[]; report: Report | null };
 // местами. Щелчки одинаково работают мышью и пальцем на планшете.
 export function SchedulePage() {
   const { id = "" } = useParams();
+  const navigate = useNavigate();
   const [schedule, setSchedule] = useState<Schedule | null>();
   const [lessons, setLessons] = useState<LessonDTO[]>([]);
   const [report, setReport] = useState<Report | null>(null);
@@ -862,12 +863,13 @@ export function SchedulePage() {
           )}
           {selected !== null && !rebuild && (
             <FixMenu lesson={lessons[selected]} lessons={lessons} dir={dir} aims={aims}
-                     onAdd={async (aim) => {
-                       const next = [...aims, aim];
-                       setAims(next);
-                       await api.saveTargeted(id, next);
-                     }}
-                     onRebuild={() => startRebuild(pins)} />
+                     onCheck={(aim, text, ring) => {
+                       // Не записываем пожелание сразу: сначала «что если»
+                       // покажет цену, и запишет его только «Принять».
+                       const change = encodeURIComponent(JSON.stringify(
+                         { kind: "aim", aim, label: text }));
+                       navigate(`/s/${id}/whatif?aim=${change}&ring=${ring}`);
+                     }} />
           )}
           {pins.length > 0 && !rebuild && (
             <Panel as="div" className="text-small">

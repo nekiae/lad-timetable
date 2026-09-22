@@ -7,7 +7,9 @@ import { alias, masker, useHideNames } from "../hideNames";
 import { Button, ButtonLink, EmptyState, Notice, Panel, Segmented, cx, inputClass } from "../ui";
 import { short } from "./SchedulePage";
 
-type Kind = Change["kind"];
+// На этом экране завуч выбирает изменение сам. Пожелание из «Поправить»
+// (kind: "aim") сюда не попадает — оно приходит готовым в адресе страницы.
+type Kind = Exclude<Change["kind"], "aim">;
 type Running = {
   label: string;
   budget: number;
@@ -36,6 +38,9 @@ export function WhatIfPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
+  // Круг правки: сколько уроков системе разрешено двигать. Закреплённое
+  // считает она сама — руками восемьсот уроков не закрепишь.
+  const [ring, setRing] = useState<{ name: string; movable: number; total: number }>();
   const [dir, setDir] = useState<Directory | null>();
   const [settings, setSettings] = useState<Record<string, unknown>>({});
   const [methodDays, setMethodDays] = useState<Record<string, number>>({});
@@ -74,6 +79,22 @@ export function WhatIfPage() {
     api.check(id).then((c) => setSeats(c.pe.gyms ? c.pe.seats : null)).catch(() => undefined);
     return () => unwatch.current.forEach((stop) => stop());
   }, [id]);
+
+  // Правка пришла с готового расписания («Поправить»): изменение уже выбрано,
+  // круг тоже. Считаем сразу, не заставляя завуча собирать его заново.
+  const fromFix = params.get("aim");
+  const fixRing = Number(params.get("ring") ?? 0);
+  const fixStarted = useRef(false);
+  useEffect(() => {
+    if (!fromFix || fixStarted.current) return;
+    fixStarted.current = true;
+    try {
+      start(JSON.parse(decodeURIComponent(fromFix)) as Change, fixRing);
+    } catch {
+      setError("Не понял, что именно поправить");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fromFix]);
 
   const control = params.get("control");
   const variant = params.get("variant");
@@ -128,15 +149,18 @@ export function WhatIfPage() {
     if (kind === "teacher_day_off") return { kind, teacher, day };
     if (kind === "gym_plus") return { kind };
     if (kind === "preset") return { kind, preset };
-    return { kind, rule, value: ruleValue };
+    return { kind: "rule", rule, value: ruleValue };
   }
 
-  async function start() {
+  async function start(ready?: Change, ring = 2) {
     setError(null);
     setBlocked(null);
     setParams({});
     try {
-      const started = await api.whatIf(id, change(), mode);
+      // `ready` приходит из «Поправить» на готовой сетке: изменение уже
+      // выбрано, спрашивать нечего — сразу считаем его цену.
+      const started = await api.whatIf(id, ready ?? change(), mode, ring);
+      setRing({ name: started.ring_name, movable: started.movable, total: started.total });
       if (started.blocked) {
         setBlocked({ label: started.label, reasons: started.blocked });
         return;
@@ -265,7 +289,7 @@ export function WhatIfPage() {
 
           <Button variant="primary" size="lg" className="mt-8"
                   disabled={(kind === "teacher_day_off" && !teacher) || (kind === "rule" && !rule)}
-                  onClick={start}>
+                  onClick={() => start()}>
             Посчитать два варианта
           </Button>
         </>
@@ -405,6 +429,7 @@ function ResultView({ result, dir, applying, onAccept, onAgain }: {
         {result.mode === "keep" && (
           <p className="text-pencil">
             Переставить придётся уроков: {b.moved} (без изменения система сама переставила бы {a.moved}).
+            {result.ring < 2 && ` Ворошили ${result.ring_name}: остальное осталось на местах.`}
           </p>
         )}
       </div>
@@ -443,8 +468,19 @@ function ResultView({ result, dir, applying, onAccept, onAgain }: {
           Данные школы изменились после расчёта. Принять этот вариант уже нельзя — посчитайте заново.
         </Notice>
       )}
+      {/* Нормы дороже любого удобства: вариант, где их нарушено больше, принимать
+          нельзя. Это не совет, а запрет — за нормы отвечает завуч, и подписывать
+          ему придётся то, что мы показали. */}
+      {b.norms > a.norms && (
+        <Notice tone="no" title="Нарушений санитарных норм стало больше" className="mt-6">
+          Было {a.norms}, стало {b.norms}. Принять такой вариант нельзя.
+          {result.ring < 2 && " Попробуйте разрешить трогать больше уроков — сейчас правка была точечной."}
+        </Notice>
+      )}
       <div className="mt-6 flex flex-wrap items-center gap-3">
-        <Button variant="primary" disabled={applying || result.stale || b.conflicts > 0} onClick={onAccept}>
+        <Button variant="primary"
+                disabled={applying || result.stale || b.conflicts > 0 || b.norms > a.norms}
+                onClick={onAccept}>
           {applying ? "Принимаю…" : "Принять изменение"}
         </Button>
         <Button onClick={onAgain}>Попробовать другое</Button>
