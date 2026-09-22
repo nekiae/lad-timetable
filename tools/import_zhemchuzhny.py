@@ -491,6 +491,7 @@ def tables(rows: list[dict]) -> dict:
         "tables": {
             "classes": [{"класс": c, "учеников": 24,
                          "смена": "2" if c in SECOND_SHIFT else "1",
+                         "кабинет": ROOM_BY_CLASS.get(c, "—"),
                          "повышенный уровень": c in advanced_classes} for c in classes],
             "subjects": [{"предмет": s,
                           "кабинет": PLAN_ROOM.get(TO_PLAN.get(s, s), "обычный"),

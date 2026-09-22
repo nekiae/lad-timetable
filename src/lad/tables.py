@@ -142,7 +142,7 @@ def plural(n: int, one: str, few: str, many: str) -> str:
 def blank_tables() -> dict[str, pd.DataFrame]:
     return {
         "classes": pd.DataFrame({"класс": ["5А"], "учеников": [24], "смена": ["1"],
-                                 "повышенный уровень": [False]}),
+                                 "кабинет": [NONE_CHOICE], "повышенный уровень": [False]}),
         "subjects": pd.DataFrame({"предмет": ["Математика"], "кабинет": ["обычный"],
                                   "только в нём": [False], "всегда парой": [False]}),
         "teachers": pd.DataFrame({"ФИО": ["Иванова И.И."], "методический день": [""],
@@ -282,7 +282,7 @@ def build_school(tables: dict[str, pd.DataFrame], settings: dict,
         shift = Shift.SECOND if str(row.get("смена") or "1").strip() == "2" else Shift.FIRST
         classes.append(SchoolClass(id=name, parallel=parallel, letter=letter,
                                    size=int(row.get("учеников") or 0),
-                                   shift=shift,
+                                   shift=shift, home_room_id=optional(row.get("кабинет")),
                                    advanced=bool(row.get("повышенный уровень", False))))
         class_rows[name] = row
         class_ids[name] = name

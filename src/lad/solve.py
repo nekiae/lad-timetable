@@ -703,6 +703,50 @@ def _solve(
                 # Ноль или два, но не один: одинокий урок труда школе не нужен.
                 model.Add(sum(day_vars) != 1)
 
+    # То же самое, но по КЛАССУ И ПРЕДМЕТУ, а не по строке нагрузки.
+    # Строк у одного предмета бывает несколько: физкультура в X–XI записана
+    # тремя — мальчики, девочки и час всем классом. Ограничение по строке
+    # их не связывает, и у 10«А» в четверг физкультура встала первым уроком
+    # всем классом и пятым по группам: ребёнок идёт в зал дважды за день
+    # (найдено 22.09.2026 придирчивым разбором готовой сетки).
+    rows_of: dict[tuple[str, str], list[int]] = defaultdict(list)
+    for i, item in enumerate(school.load):
+        for class_id in school.group(item.group_id).class_ids:
+            rows_of[class_id, item.subject_id].append(i)
+    for (class_id, subject_id), rows in rows_of.items():
+        if len(rows) < 2:
+            continue  # одна строка — уже ограничена выше
+        # Подгруппы с ОДИНАКОВЫМИ часами и без общего урока идут синхронно
+        # (HARD-9), значит занимают один слот, и ограничения по строке хватает.
+        # Строить на них переменные — пустая трата: на Жемчужненской это
+        # двадцать три тысячи лишних булевых, и поиск тонул (окна 121 вместо 33).
+        by_part = {school.group(school.load[i].group_id).part or "": school.load[i].hours_per_week
+                   for i in rows}
+        if "" not in by_part and len(set(by_part.values())) == 1:
+            continue
+        parallel = class_parallels.get(class_id, 0)
+        # Сдвоенный урок разрешают по ЛЮБОЙ из строк: у математики в профильном
+        # классе базовая группа идёт базовыми часами, а повышенная — шестью,
+        # и пара нужна именно ей. Брать уровень первой строки нельзя: если
+        # первой окажется базовая, шесть часов не разложатся по пяти дням
+        # и расписания не станет вовсе (проверено 22.09.2026).
+        double = any(
+            school.norms.double_allowed(names_of_subject.get(subject_id, ""), parallel,
+                                        school.load[i].level != Level.BASE)
+            for i in rows) or subject_always_double.get(subject_id, False)
+        for day in {sl.day for sl in slots}:
+            in_day = []
+            for slot in (sl for sl in slots if sl.day == day):
+                var = model.NewBoolVar(f"cs_{class_id}_{subject_id}_{slot}")
+                model.AddMaxEquality(var, [x[i, slot] for i in rows])
+                in_day.append((slot.period, var))
+            model.Add(sum(v for _, v in in_day) <= (2 if double else 1))
+            if double and school.norms.double_must_be_consecutive:
+                for p1, first in in_day:
+                    for p2, second in in_day:
+                        if p2 >= p1 + 2:
+                            model.Add(first + second <= 1)
+
     # --- HARD-1: учитель не ведёт два урока одновременно
     by_teacher: dict[str, list[int]] = defaultdict(list)
     for i, item in enumerate(school.load):
@@ -1515,7 +1559,18 @@ def _solve(
                 var = model.NewBoolVar(f"pe_{class_id}_{day}")
                 model.AddMaxEquality(var, [x[i, s] for i in indices for s in slots if s.day == day])
                 pe_day[day] = var
-            hours = sum(school.load[i].hours_per_week for i in indices)
+            # Занятий в неделю, а не суммы часов учителей: подгруппы идут
+            # в один час. В X–XI физкультура записана тремя строками —
+            # мальчики, девочки и час всем классом, — и сумма давала 5 занятий
+            # вместо трёх. Класс получал послабление нормы, которое ему
+            # не нужно, и «физкультура два дня подряд» оставалась в готовой
+            # сетке (найдено 22.09.2026 разбором расписания Жемчужненской).
+            by_part: dict[str, int] = {}
+            for i in indices:
+                part = school.group(school.load[i].group_id).part or ""
+                by_part[part] = by_part.get(part, 0) + school.load[i].hours_per_week
+            hours = by_part.get("", 0) + max(
+                [v for k, v in by_part.items() if k] or [0])
             mode = rules.pe_two_days
             if mode == "hard" and hours > room_for_pe:
                 mode = "soft"
@@ -1543,8 +1598,16 @@ def _solve(
                                      school.load[i].level != Level.BASE)
                 or subject_always_double.get(school.load[i].subject_id, False)
                 for i in indices)
+            # ...но только там, где физкультура записана однородно. В X–XI она
+            # разбита на три строки с разными часами (мальчики, девочки и час
+            # всем классом), и жёсткая раскладка «пн, ср, пт» вместе с прочими
+            # запретами делала школу нерешаемой. Там норму оставляем нормой:
+            # солвер сам найдёт те же три дня, только не обязан начинать
+            # с понедельника (проверено 22.09.2026).
+            simple_pe = len({school.group(school.load[i].group_id).part or ""
+                             for i in indices}) <= 1
             if mode == "hard" and hours == room_for_pe and len(days) % 2 == 1 \
-                    and consecutive and once_a_day:
+                    and consecutive and once_a_day and simple_pe:
                 for day in days[1::2]:
                     for i in indices:
                         for s in slots:
@@ -2091,6 +2154,11 @@ def solve(
     return draft
 
 
+# Кабинеты, которые нельзя отдать «просто уроку»: без них занятие не провести.
+STRICT_KINDS = {RoomKind.GYM, RoomKind.COMPUTER,
+                RoomKind.WORKSHOP_TECH, RoomKind.WORKSHOP_SERVICE}
+
+
 def assign_rooms(school: School, lessons: list[Lesson]) -> list[Lesson]:
     """Назначить конкретные кабинеты уже поставленным урокам.
 
@@ -2117,9 +2185,17 @@ def assign_rooms(school: School, lessons: list[Lesson]) -> list[Lesson]:
     # листе печати. Теперь у каждого класса свой обычный кабинет — по порядку, пока
     # их хватает, — и его урокам он достаётся первым. При кабинетной системе
     # (у учителей свои кабинеты) классам кабинеты не закрепляем: там ходят дети.
+    # Кабинет, названный школой, сильнее любой нашей раздачи: завуч знает,
+    # где сидит класс, и в таблице «класс — кабинет — смена» это записано.
+    # Своё придумываем только там, где школа не сказала.
     regular_rooms = rooms_by_kind.get(RoomKind.REGULAR, [])
-    class_home = {} if home else {
-        c.id: regular_rooms[n].id for n, c in enumerate(school.classes) if n < len(regular_rooms)}
+    named = {c.id: c.home_room_id for c in school.classes if c.home_room_id}
+    if named:
+        class_home = dict(named)
+    else:
+        class_home = {} if home else {
+            c.id: regular_rooms[n].id for n, c in enumerate(school.classes)
+            if n < len(regular_rooms)}
     reserved = set(class_home.values())
     groups = {g.id: g for g in school.groups}
     last_room: dict[str, str] = {}  # учитель → кабинет его предыдущего урока
@@ -2189,6 +2265,16 @@ def assign_rooms(school: School, lessons: list[Lesson]) -> list[Lesson]:
             lesson.room_id = first_free(rooms_by_kind.get(kind, []))
             if lesson.room_id is None and len(pool) > 1:
                 lesson.room_id = first_free(rooms_by_kind.get(RoomKind.REGULAR, []))
+            if lesson.room_id is None and not subject_strict.get(lesson.subject_id, True):
+                # Обычных кабинетов не хватило — сажаем в свободный спецкабинет.
+                # Английский в кабинете химии лучше, чем английский нигде:
+                # на Жемчужненской обычных комнат пятнадцать на шестнадцать
+                # классов первой смены, и три урока оставались без кабинета
+                # вовсе (найдено 22.09.2026). Строгие предметы — физкультуру,
+                # информатику, труд — так не двигаем: им нужен именно их зал.
+                spare = [room for room in school.rooms
+                         if room.kind not in STRICT_KINDS and has_place(room.id)]
+                lesson.room_id = first_free(spare)
             if lesson.room_id:
                 used[lesson.room_id] += 1
                 last_room[teacher] = lesson.room_id
