@@ -210,6 +210,14 @@ def parse(text: str) -> list[dict]:
             left = spots[number - 1].end() if number else 0
             right = spots[number + 1].start() if number + 1 < len(spots) else len(line)
             near = line[left:right].lower()
+            # Предмет может смениться ПОСРЕДИ строки: «Биология: 6абвг - 4 ч.,
+            # Человек и мир : 5авг- 3 ч.» — вторая половина уже про другой
+            # предмет. Раньше брался только заголовок в начале строки, и три
+            # пятых класса получали биологию вместо «Человека и мира»
+            # (найдено 22.09.2026 при сверке данных для завуча).
+            ahead = find_subject(line[left:found.start()])
+            if ahead:
+                subject = ahead
             advanced = "проф" in near or "повышен" in near
             parallel, letters, mark, first, _second = found.groups()
             near = f"{near} {mark or ''}".lower()
