@@ -261,6 +261,7 @@ class Rules:
     peak_days: str = "soft"  # п. 94: максимум нагрузки во вторник/среду/пятницу
     difficulty_balance: str = "soft"  # п. 88.2: равномерность по трудности
     even_days: str = "soft"  # ровное число уроков по дням (не норма, а качество)
+    one_subject_at_once: str = "hard"  # в один час у класса один предмет
     teacher_wishes: str = "soft"  # пожелания учителей (не норма, а договорённость)
 
     def on(self, name: str) -> bool:
@@ -815,6 +816,47 @@ def _solve(
                     busy[class_id, Slot(day, period, shift)]
                     >= busy[class_id, Slot(day, period + 1, shift)]
                 )
+
+    # --- HARD-2б: в один час у класса идёт ОДИН предмет.
+    #
+    # HARD-2 запрещает классу два урока разом и одной подгруппе — два урока.
+    # Но подгруппа опознаётся по имени, а деления режут класс по-разному:
+    # «первая группа» по информатике и «повышенная» по математике — это одни
+    # и те же дети. Модель считала их разными половинами класса и спокойно
+    # ставила им два предмета в один час. На готовой сетке Жемчужненской таких
+    # слотов оказалось четырнадцать: у 10«А» во вторник седьмым уроком стояли
+    # одновременно допризывная двумя группами И математика двумя группами
+    # (найдено 22.09.2026).
+    #
+    # Считаем по предметам: в слоте у класса занят максимум один. Наложение
+    # двух делений разных предметов запрещено — кроме школ, где само деление
+    # записано двумя предметами («допризывная» у юношей и «медицинская»
+    # у девушек). Там правило выключают.
+    for class_id, whole_rows in whole.items():
+        if crule("one_subject_at_once", rules.one_subject_at_once, class_id) == "off":
+            continue
+        by_subject: dict[str, list[int]] = defaultdict(list)
+        for (cid, _), rows_of_part in parts.items():
+            if cid != class_id:
+                continue
+            for i in rows_of_part:
+                by_subject[school.load[i].subject_id].append(i)
+        if len(by_subject) < 2:
+            continue  # одно деление — накладываться не на что
+        hard_here = crule("one_subject_at_once", rules.one_subject_at_once, class_id) == "hard"
+        for slot in slots:
+            here = []
+            for subject_id, rows_of_subject in by_subject.items():
+                var = model.NewBoolVar(f"sub_{class_id}_{subject_id}_{slot}")
+                model.AddMaxEquality(var, [x[i, slot] for i in rows_of_subject])
+                here.append(var)
+            if hard_here:
+                model.Add(sum(here) <= 1)
+            else:
+                over = model.NewIntVar(0, len(here), f"subover_{class_id}_{slot}")
+                model.Add(over >= sum(here) - 1)
+                penalties.append((over, 40))
+                trackers["Два предмета в один час"].append(over)
 
     # --- HARD-8б: лишний час профиля — в конец дня, а не в середину.
     #
@@ -1982,18 +2024,23 @@ def solve(
     # переключатель и получал «расписание не находится» без объяснения
     # (школа из примера, тот же замер). Теперь режим сам отступает на «мягко»
     # и говорит об этом: строгость дней не стоит отсутствия расписания.
-    if not draft.ok and rules.is_hard("even_days") and left() > 10:
-        softer = replace(rules, even_days="soft")
-        relaxed = dict(common, rules=softer)
+    # Порядок отступления: сначала ровность дней (это качество), потом
+    # «один предмет в час» (это уже физика класса, и уступать её больно).
+    for rule_name in ("even_days", "one_subject_at_once"):
+        if draft.ok or not rules.is_hard(rule_name) or left() <= 10:
+            continue
+        softer = replace(rules, **{rule_name: "soft"})
+        relaxed_common = dict(common, rules=softer)
         draft = _solve(school, max_seconds=left() * share, optimize=True,
                        soft_norms=True, norms_only=not TUNING["draft_comfort"],
                        on_progress=on_progress, phase="draft", hint=hint, stay=stay,
-                       stay_weight=1 if stay else 0, **relaxed)
+                       stay_weight=1 if stay else 0, **relaxed_common)
         if draft.ok:
-            rules, common = softer, relaxed
+            rules, common = softer, relaxed_common
             draft.relaxed = [*draft.relaxed,
-                             "Ровное число уроков в дне — с допуском: без него "
-                             "расписания у этой школы не существует"]
+                             f"«{RULE_TITLES[rule_name]}» — мягко: жёстко "
+                             f"расписания у этой школы не существует"]
+
     if not draft.ok:
         return draft
 
@@ -2152,6 +2199,7 @@ RULE_TITLES = {
     "peak_days": "Пик нагрузки во вторник, среду или пятницу",
     "difficulty_balance": "Равномерность дней по трудности",
     "even_days": "Ровное число уроков в дне",
+    "one_subject_at_once": "В один час у класса один предмет",
     "teacher_wishes": "Пожелания учителей",
 }
 
@@ -2169,6 +2217,12 @@ RULE_SOURCES = {
                   "на 8. «Жёстко» — дни ровные, по 6–7; если школа этого не "
                   "выдержит, система сама вернётся к допуску и скажет об этом. "
                   "Начинать стоит с «жёстко»",
+    "one_subject_at_once": "деления режут класс по-разному: первая группа "
+                           "по информатике и профильная по математике — это одни "
+                           "и те же дети. Ставить им два разных предмета в один "
+                           "час нельзя. Выключать стоит только там, где деление "
+                           "записано двумя предметами — «допризывная» у юношей "
+                           "и «медицинская» у девушек",
     "teacher_wishes": "не норма, а договорённости внутри школы",
 }
 
