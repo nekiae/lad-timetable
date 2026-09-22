@@ -317,10 +317,14 @@ export const api = {
       plan: string[];
       /** Что система домыслила при импорте и что стоит подтвердить. */
       assumptions: string[];
+      /** Адресные пожелания школы: «кому → что → насколько». */
+      targeted: { scope: string; who: string; key: string; value: number | string }[];
       stats: Record<string, number>;
       /** Спортзалы: уроков физкультуры в неделю и мест в залах за один урок. */
       pe: { hours: number; gyms: number; seats: number; periods: number; days: number };
     }>("GET", `/schools/${id}/check`),
+  saveTargeted: (id: string, rows: unknown[]) =>
+    call<{ revision: number }>("PUT", `/schools/${id}/targeted`, { rows }),
   clearAssumptions: (id: string) => call<{ revision: number }>("DELETE", `/schools/${id}/assumptions`),
   input: (id: string) => call<InputState>("GET", `/schools/${id}/input`),
   generateClasses: (id: string, counts: Record<string, number>, sizes: Record<string, number>) =>

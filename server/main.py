@@ -209,6 +209,7 @@ def check_input(school_id: str) -> dict:
         # Что система домыслила за школу при импорте: кабинет наугад, учеников
         # по умолчанию, деление по двум учителям. Висит, пока не подтвердят.
         "assumptions": doc.get("assumptions") or [],
+        "targeted": doc.get("targeted") or [],
         "stats": {"classes": len(school.classes), "teachers": len(school.teachers),
                   "rooms": len(school.rooms),
                   "hours": sum(item.hours_per_week for item in school.load)},
@@ -217,6 +218,18 @@ def check_input(school_id: str) -> dict:
 
 
 # ---------------------------------------------------------------- составление
+
+class TargetedBody(BaseModel):
+    rows: list[dict]
+
+
+@app.put("/api/schools/{school_id}/targeted")
+def save_targeted(school_id: str, body: TargetedBody) -> dict:
+    """Адресные пожелания школы: «кому → что → насколько»."""
+    doc, _ = _load(school_id)
+    doc["targeted"] = body.rows
+    return {"revision": db.save_school(school_id, doc)}
+
 
 @app.delete("/api/schools/{school_id}/assumptions")
 def clear_assumptions(school_id: str) -> dict:

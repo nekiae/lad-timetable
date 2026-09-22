@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { TargetedPrefs, type Aim } from "./TargetedPrefs";
 
 import { api, type Doc, type Progress, type SearchSetup, type SolveDone } from "../api";
 import { Button, ButtonLink, Choice, Notice, Segmented, cx } from "../ui";
@@ -28,6 +29,9 @@ export function SchoolPage() {
   // это вход составления, как нагрузка, и должен переживать перезагрузку.
   const [strict, setStrict] = useState<Record<string, string>>({});
   const [doc, setDoc] = useState<Doc>();
+  // Адресные пожелания: «у одиннадцатых ровные дни жёстко». Живут в данных
+  // школы, а не в запуске: это её постоянные договорённости.
+  const [aims, setAims] = useState<Aim[]>([]);
   const [preset, setPreset] = useState("Поровну");
   const [budget, setBudget] = useState(300);
   const [job, setJob] = useState<string>();
@@ -43,7 +47,7 @@ export function SchoolPage() {
   const unwatch = useRef<() => void>();
 
   useEffect(() => {
-    api.check(id).then(setCheck);
+    api.check(id).then((c) => { setCheck(c); setAims((c.targeted ?? []) as Aim[]); });
     api.rules().then((r) => {
       setPresets(r.presets);
       setRules(r.rules);
@@ -288,6 +292,19 @@ export function SchoolPage() {
               </ul>
             </div>
           ))}
+        </details>
+      )}
+
+      {!running && !empty && preferences.length > 0 && rules.length > 0 && (
+        <details className="mt-8 rounded-lg border border-rule bg-sheet p-4">
+          <summary className="cursor-pointer text-heading">Пожелания по адресу</summary>
+          <TargetedPrefs
+            id={id} doc={doc} aims={aims} onChange={setAims}
+            choices={[
+              ...rules.map((r) => ({ key: r.key, title: r.title, kind: "rule" as const })),
+              ...preferences.map((p) => ({ key: p.key, title: p.title, kind: "level" as const })),
+            ]}
+          />
         </details>
       )}
 

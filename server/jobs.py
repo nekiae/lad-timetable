@@ -31,7 +31,8 @@ _CTX = mp.get_context("spawn")
 def _worker(doc: dict, options: dict, events, stop_flag) -> None:
     """Тело дочернего процесса: собрать школу, составить, отдать результат."""
     try:
-        from lad.solve import PRESETS, Rules, Weights, assign_rooms, solve, weights_from_prefs
+        from lad.solve import (PRESETS, Rules, Targeted, Weights, assign_rooms, solve,
+                               weights_from_prefs)
         from lad.storage import lessons_from_dict, lessons_to_dict
         from lad.tables import build_school, tables_from_dict
 
@@ -47,6 +48,10 @@ def _worker(doc: dict, options: dict, events, stop_flag) -> None:
         weights = weights_from_prefs(weights, options.get("prefs"))
         known = set(Rules.__dataclass_fields__)
         rules = Rules(**{k: v for k, v in (options.get("rules") or {}).items() if k in known})
+        # Адресные пожелания лежат в данных школы, а не в запросе: это её
+        # постоянные договорённости («у одиннадцатых ровные дни жёстко»),
+        # а не настройка одного запуска.
+        targeted = Targeted(doc.get("targeted") or [])
         pinned = lessons_from_dict(options["pinned"]) if options.get("pinned") else None
         hint = lessons_from_dict(options["hint"]) if options.get("hint") else None
         stay = hint if options.get("keep") else None  # пересборка: двигать нужное, а не всё
@@ -75,7 +80,7 @@ def _worker(doc: dict, options: dict, events, stop_flag) -> None:
         result = solve(school, max_seconds=float(options.get("budget") or 300),
                        weights=weights, rules=rules, pinned=pinned, hint=hint, stay=stay,
                        on_progress=on_progress, should_stop=stop_flag.is_set,
-                       params=options.get("params"),
+                       params=options.get("params"), targeted=targeted,
                        settle=float(options["settle"]) if options.get("settle") else None)
         lessons = assign_rooms(school, result.lessons) if result.ok else []
         # Пустой результат без объяснения — худшее, что можно показать завучу:

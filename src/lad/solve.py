@@ -63,6 +63,49 @@ class Weights:
     pe_first_period: int = 0  # физкультура не первым уроком
 
 
+# Кому адресовано пожелание. Частное перебивает общее: правило для 11«А»
+# сильнее правила для всех одиннадцатых, а оно — сильнее правила для школы.
+SCOPE_RANK = {"school": 0, "parallel": 1, "class": 2, "teacher": 2}
+
+
+@dataclass
+class Targeted:
+    """Пожелания с адресом: «кому → что → насколько».
+
+    Раньше каждое пожелание было одно на всю школу, и это ломалось о простое:
+    у одиннадцатых 37 уроков в неделю, у шестых 26. Жёсткая ровность дней
+    первым по силам, вторым — нет, а переключатель был общий, и завуч выбирал
+    между «неровно у всех» и «не составилось вовсе» (22.09.2026).
+
+    Запись: {"scope": "school|parallel|class|teacher", "who": "11А", "key": ..., "value": ...}.
+    Для ползунков value — число, для правил — «hard»/«soft»/«off».
+    """
+
+    rows: list[dict] = field(default_factory=list)
+
+    def value(self, key: str, default, *, class_id: str | None = None,
+              parallel: int | None = None, teacher: str | None = None):
+        """Самое частное правило по этому адресу — или значение по умолчанию."""
+        best, best_rank = default, -1
+        for row in self.rows:
+            if row.get("key") != key:
+                continue
+            scope = row.get("scope", "school")
+            who = str(row.get("who") or "").strip()
+            if scope == "class" and who != (class_id or ""):
+                continue
+            if scope == "teacher" and who != (teacher or ""):
+                continue
+            if scope == "parallel" and who != (str(parallel) if parallel else ""):
+                continue
+            if scope not in SCOPE_RANK:
+                continue
+            rank = SCOPE_RANK[scope]
+            if rank >= best_rank:
+                best, best_rank = row.get("value", default), rank
+        return best
+
+
 # Готовые наборы весов. Завучу не нужно знать слово «штраф»: ему нужно решить,
 # чьё удобство важнее, когда всем сразу угодить нельзя. Числа — уже наше дело.
 PRESETS = {
@@ -458,6 +501,7 @@ def _solve(
     stay: list[Lesson] | None = None,
     stay_weight: int = 0,
     hint: list[Lesson] | None = None,
+    targeted: "Targeted | None" = None,
 ) -> SolveResult:
     """Составить расписание.
 
@@ -474,6 +518,27 @@ def _solve(
     """
     model = cp_model.CpModel()
     rules = rules or Rules()
+
+    # Адресные пожелания. Без них всё работает ровно как раньше: value()
+    # возвращает значение по умолчанию, когда правила по этому адресу нет.
+    aim = targeted or Targeted()
+    _parallel_of = {c.id: c.parallel for c in school.classes}
+    _teacher_name = {t.id: t.name for t in school.teachers}
+
+    def cw(key: str, default, class_id: str) -> int:
+        """Вес пожелания для КЛАССА: своё правило → правило параллели → школы."""
+        return int(aim.value(key, default, class_id=class_id,
+                             parallel=_parallel_of.get(class_id)))
+
+    def tw(key: str, default, teacher_id: str) -> int:
+        """Вес пожелания для УЧИТЕЛЯ. Адресуется по ФИО — так его выбирают."""
+        return int(aim.value(key, default, teacher=_teacher_name.get(teacher_id)))
+
+    def crule(name: str, default: str, class_id: str) -> str:
+        """Строгость правила для класса: «hard», «soft» или «off»."""
+        return str(aim.value(name, default, class_id=class_id,
+                             parallel=_parallel_of.get(class_id)))
+
     slots = school.lesson_slots(shift)
     started_at = time.monotonic()
 
@@ -875,7 +940,7 @@ def _solve(
 
             gaps = model.NewIntVar(0, win_to - win_from + 1, f"gaps_{tag}")
             model.Add(gaps == sum(present.values()) - sum(t_busy.values()))
-            penalties.append((gaps, w.teacher_gap))
+            penalties.append((gaps, tw("teacher_gap", w.teacher_gap, teacher_id)))
             trackers["Окна у учителей"].append(gaps)
             day_gaps.append(gaps)
 
@@ -896,7 +961,8 @@ def _solve(
           works_day = model.NewBoolVar(f"worksday_{teacher_id}_{day}")
           for var in day_busy:
               model.Add(works_day >= var)
-          penalties.append((works_day, w.teacher_day))  # SOFT-3: меньше дней в школе
+          # SOFT-3: меньше дней в школе
+          penalties.append((works_day, tw("teacher_day", w.teacher_day, teacher_id)))
           trackers["Выходы в школу"].append(works_day)
 
           # Работа в обе смены: пришёл к восьми, ушёл в семь вечера. Это не
@@ -914,10 +980,11 @@ def _solve(
           # Выход в школу ради одного урока. single ≥ 2·works − уроков:
           # 0 уроков → 0, 1 урок → 1, два и больше → не больше нуля. Ограничено
           # только снизу — штраф сам опустит переменную, где урок не один.
-          if single_weight:
+          single_here = tw("single_lesson_day", single_weight, teacher_id)
+          if single_here:
               single = model.NewBoolVar(f"single_{teacher_id}_{day}")
               model.Add(single >= 2 * works_day - sum(day_busy))
-              penalties.append((single, single_weight))
+              penalties.append((single, single_here))
               trackers["Дней ради одного урока"].append(single)
 
     # --- SOFT-5 + коридор дня: равномерная нагрузка класса по дням.
@@ -951,14 +1018,18 @@ def _solve(
 
         # Короткий день недели (предпочтение школы): в выбранный день — на урок
         # меньше обычного. Цель достижима: нижняя граница коридора дня тоже low − 1.
-        if w.light_day and w.light_day_of_week in days and total:
+        light_here = cw("light_day", w.light_day, class_id)
+        light_day_of_week = cw("light_day_of_week", w.light_day_of_week, class_id)
+        if light_here and light_day_of_week in days and total:
             target = max(1, low - 1)
             extra = model.NewIntVar(0, school.periods_per_day, f"light_{class_id}")
-            model.Add(extra >= per_day[days.index(w.light_day_of_week)] - target)
-            penalties.append((extra, w.light_day))
+            model.Add(extra >= per_day[days.index(light_day_of_week)] - target)
+            penalties.append((extra, light_here))
             trackers["Короткий день: лишних уроков"].append(extra)
 
-        if total and rules.on("even_days") and low <= high:
+        even_here = crule("even_days", rules.even_days, class_id)
+        balance_here = cw("class_imbalance", w.class_imbalance, class_id)
+        if total and even_here != "off" and low <= high:
             # Жёсткая граница шире идеала на урок в каждую сторону, а к идеалу
             # тянет штраф. Идеальный коридор «ровно 5–6» оказался неподъёмным:
             # на 28 классах поиск ЛЮБОГО расписания стал нестабильным — то 10
@@ -988,13 +1059,13 @@ def _solve(
             hard_low = max(1, low - 1)
             hard_high = min(win_to - win_from + 1, high + 1)
             for count in per_day:
-                if rules.is_hard("even_days"):
+                if even_here == "hard":
                     # «Жёстко» — идеальный коридор без допуска: дни выходят
                     # ровно 5–6 при 28 часах. Ровнее не бывает, но модель
                     # становится тяжёлой и расписание может не найтись вовсе.
                     model.Add(count >= low)
                     model.Add(count <= high)
-                elif rules.on("even_days"):
+                else:
                     model.Add(count >= hard_low)
                     model.Add(count <= hard_high)
                 short = model.NewIntVar(0, school.periods_per_day, f"short_{count.Name()}")
@@ -1006,15 +1077,15 @@ def _solve(
                 # которого коридор и вводился. Второй урок сверх коридора
                 # штрафуется вчетверо: один лишний урок — мелочь, два —
                 # это уже день на восемь рядом с днём на пять.
-                penalties.append((short, w.class_imbalance * 8))
-                penalties.append((over, w.class_imbalance * 8))
+                penalties.append((short, balance_here * 8))
+                penalties.append((over, balance_here * 8))
                 far = model.NewIntVar(0, school.periods_per_day, f"far_{count.Name()}")
                 model.Add(far >= count - high - 1)
-                penalties.append((far, w.class_imbalance * 24))
+                penalties.append((far, balance_here * 24))
                 # ...и день короче идеала на два урока — тоже день впустую.
                 barely = model.NewIntVar(0, school.periods_per_day, f"barely_{count.Name()}")
                 model.Add(barely >= low - 1 - count)
-                penalties.append((barely, w.class_imbalance * 24))
+                penalties.append((barely, balance_here * 24))
 
         day_max = model.NewIntVar(0, school.periods_per_day, f"max_{class_id}")
         day_min = model.NewIntVar(0, school.periods_per_day, f"min_{class_id}")
@@ -1023,7 +1094,7 @@ def _solve(
 
         spread = model.NewIntVar(0, school.periods_per_day, f"spread_{class_id}")
         model.Add(spread == day_max - day_min)
-        penalties.append((spread, max(1, round(w.class_imbalance * float(TUNING["balance_x"])))))
+        penalties.append((spread, max(1, round(balance_here * float(TUNING["balance_x"])))))
         trackers["Разброс дней"].append(spread)
 
     parallels = {c.id: c.parallel for c in school.classes}
@@ -1053,10 +1124,13 @@ def _solve(
     # во вторник — к завтрашнему уроку не подготовить домашнее. Предметам на
     # 4–5 часов соседние дни неизбежны, их не трогаем. Подгруппа «2» идёт
     # синхронно с «1», поэтому штраф берётся один раз — по первой.
-    if spacing_weight:
+    if spacing_weight or any(r.get("key") == "subject_spacing" for r in aim.rows):
         for i, item in enumerate(school.load):
             group = school.group(item.group_id)
             if item.hours_per_week not in (2, 3) or i not in representative:
+                continue
+            spacing_here = cw("subject_spacing", spacing_weight, group.class_ids[0])
+            if not spacing_here:
                 continue
             on_day = {}
             for day in days:
@@ -1068,12 +1142,14 @@ def _solve(
                     continue
                 adjacent = model.NewBoolVar(f"adj_{i}_{day}")
                 model.Add(adjacent >= on_day[day] + on_day[nxt] - 1)
-                penalties.append((adjacent, spacing_weight))
+                penalties.append((adjacent, spacing_here))
                 trackers["Предмет в соседние дни"].append(adjacent)
 
     # --- Предпочтения школы сверх норм: трудные не в конце дня, физкультура
     # не первым уроком, поменьше сдвоенных. Все три — только штрафы, по умолчанию 0.
-    if w.late_hard or w.pe_first_period or w.avoid_doubles:
+    _school_prefs = {r.get("key") for r in aim.rows}
+    if (w.late_hard or w.pe_first_period or w.avoid_doubles
+            or _school_prefs & {"late_hard", "pe_first_period", "avoid_doubles"}):
         always_pair = {s.id: s.always_double for s in school.subjects}
         for i, item in enumerate(school.load):
             group = school.group(item.group_id)
@@ -1081,22 +1157,26 @@ def _solve(
                 continue  # подгруппы стоят в одни часы — штраф один раз
             name = subject_names.get(item.subject_id, "")
             parallel = max((parallels.get(c, 0) for c in group.class_ids), default=0)
-            if w.late_hard and school.norms.is_hard_subject(name) and parallel in school.norms.hard_parallels:
+            here = group.class_ids[0]
+            late_here = cw("late_hard", w.late_hard, here)
+            pe_first_here = cw("pe_first_period", w.pe_first_period, here)
+            doubles_here = cw("avoid_doubles", w.avoid_doubles, here)
+            if late_here and school.norms.is_hard_subject(name) and parallel in school.norms.hard_parallels:
                 for slot in slots:
                     if slot.period >= 6:
-                        penalties.append((x[i, slot], w.late_hard))
+                        penalties.append((x[i, slot], late_here))
                         trackers["Трудные предметы с 6-го урока"].append(x[i, slot])
-            if w.pe_first_period and school.norms.is_pe(name):
+            if pe_first_here and school.norms.is_pe(name):
                 for slot in slots:
                     if slot.period == 1:
-                        penalties.append((x[i, slot], w.pe_first_period))
+                        penalties.append((x[i, slot], pe_first_here))
                         trackers["Физкультура первым уроком"].append(x[i, slot])
-            if (w.avoid_doubles and not always_pair.get(item.subject_id)
+            if (doubles_here and not always_pair.get(item.subject_id)
                     and school.norms.double_allowed(name, parallel, item.level != Level.BASE)):
                 for day in days:
                     pair = model.NewIntVar(0, 1, f"dbl_{i}_{day}")
                     model.Add(pair >= sum(x[i, slot] for slot in slots if slot.day == day) - 1)
-                    penalties.append((pair, w.avoid_doubles))
+                    penalties.append((pair, doubles_here))
                     trackers["Сдвоенных уроков"].append(pair)
 
     # --- Пожелания учителей: «нежелательно», а не «не могу».
@@ -1109,7 +1189,8 @@ def _solve(
             teacher = teacher_by_id[item.teacher_id]
             for slot in teacher.disliked:
                 if (i, slot) in x:
-                    penalties.append((x[i, slot], w.teacher_wish))
+                    penalties.append((x[i, slot],
+                                      tw("teacher_wish", w.teacher_wish, item.teacher_id)))
 
     # --- Вспомогательное: «этот урок — последний в дне у класса».
     # Нужно для норм про первый/последний урок. Первый урок — всегда № 1:
@@ -1343,7 +1424,8 @@ def _solve(
                 model.AddMinEquality(lo, flat)
                 gap = model.NewIntVar(0, max_day_score, f"dspread_{class_id}")
                 model.Add(gap == hi - lo)
-                penalties.append((gap, w.difficulty_imbalance))
+                penalties.append((gap, cw("difficulty_imbalance",
+                                          w.difficulty_imbalance, class_id)))
                 trackers["Разброс трудности"].append(gap)
 
             # Пик — в дни наибольшей работоспособности: непиковый день не должен
@@ -1354,7 +1436,8 @@ def _solve(
                 for day in others:
                     excess = model.NewIntVar(0, max_day_score, f"excess_{class_id}_{day}")
                     model.Add(excess >= score_of_day[day] - peak_lo)
-                    penalties.append((excess, max(1, round(w.peak_day * float(TUNING["peak_x"])))))
+                    penalties.append((excess, max(1, round(
+                        cw("peak_day", w.peak_day, class_id) * float(TUNING["peak_x"])))))
 
     solver = cp_model.CpSolver()
 
@@ -1633,6 +1716,7 @@ def solve(
     hint: list[Lesson] | None = None,
     stay: list[Lesson] | None = None,
     settle: float | None = None,
+    targeted: "Targeted | None" = None,
 ) -> SolveResult:
     """Составить расписание. Всегда отдаёт сетку, если она в принципе существует.
 
@@ -1712,7 +1796,8 @@ def solve(
                     and time.monotonic() - settled["at"] >= settle)
 
     common = dict(shift=shift, weights=weights, rules=rules, should_stop=should_stop,
-                  pinned=pinned, params=params, ignore_rooms=ignore_rooms)
+                  pinned=pinned, params=params, ignore_rooms=ignore_rooms,
+                  targeted=targeted)
     if not optimize or not any(rules.is_hard(name) for name in RULE_TITLES):
         return _solve(school, max_seconds=max_seconds, optimize=optimize,
                       on_progress=on_progress, hierarchical=hierarchical, **common)
