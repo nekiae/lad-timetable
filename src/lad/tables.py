@@ -600,9 +600,17 @@ def check_norms(school: School) -> list[str]:
         whole = sum(i.hours_per_week for i in school.load
                     if school.group(i.group_id).class_ids == [c.id]
                     and school.group(i.group_id).part is None)
-        split_subjects = {i.subject_id: i.hours_per_week for i in school.load
-                          if school.group(i.group_id).class_ids == [c.id]
-                          and school.group(i.group_id).part is not None}
+        # У делёного предмета класс занят столько часов, сколько у БОЛЬШЕЙ
+        # группы: профильная берёт математику шесть часов, базовая четыре,
+        # и класс сидит шесть. Словарь брал последнее значение, а не большее,
+        # и 10«А» с 11«Б» проходили проверку молча — превышение всплывало уже
+        # в готовом расписании (найдено 22.09.2026).
+        split_subjects: dict[str, int] = {}
+        for item in school.load:
+            group = school.group(item.group_id)
+            if group.class_ids == [c.id] and group.part is not None:
+                split_subjects[item.subject_id] = max(
+                    split_subjects.get(item.subject_id, 0), item.hours_per_week)
         hours = whole + sum(split_subjects.values())
         limit = school.norms.hours_limit(c.parallel, c.advanced)
         if limit and hours > limit:
