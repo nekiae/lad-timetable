@@ -944,7 +944,10 @@ def _solve(
         total = class_week_hours.get(class_id, 0)
         low = total // day_count if day_count else 0
         high = -(-total // day_count) if day_count else 0
-        high = min(high, school.periods_per_day)
+        # Потолок дня — длина окна СВОЕЙ смены, а не всей оси: вторая смена
+        # учится шесть уроков, сколько бы их ни было в дне у первой.
+        win_from, win_to = school.class_window(class_id)
+        high = min(high, win_to - win_from + 1)
 
         # Короткий день недели (предпочтение школы): в выбранный день — на урок
         # меньше обычного. Цель достижима: нижняя граница коридора дня тоже low − 1.
@@ -963,8 +966,27 @@ def _solve(
             # из трёх разошлись). Допуск в один урок возвращает солверу свободу,
             # а штраф всё равно приводит дни к 5–6: разброс по школе остаётся
             # тем же, но результат появляется всегда.
+            # Допуск был симметричным — и стал нормой. При 33 уроках коридор
+            # «6–7» превращался в разрешённые 5–8, а штраф в 16 очков солвер
+            # охотно платил, лишь бы сэкономить пару окон учителю (10 очков
+            # за окно). Получались дни 5 и 8 у одного класса — ровно то,
+            # против чего коридор и вводился (найдено 22.09.2026 на 9«Г»).
+            #
+            # ПОЛ КОРИДОРА. Допуск вниз («можно на урок меньше идеала») был
+            # симметричным — и стал нормой: солвер охотно платил 16 очков,
+            # чтобы сэкономить учителю пару окон, и у класса выходил день
+            # на 5 рядом с днём на 8. Убрать допуск целиком нельзя: школа
+            # из примера тогда не считается вовсе, ни одной сетки за 120 с
+            # (проверено 22.09.2026, как и предупреждал замер 25.08).
+            # Поднять цену допуска — тоже не выход: поиск тонет, первая сетка
+            # уходит с 2 до 55 секунд.
+            # Убрать допуск насовсем — значит потерять школы, которые его
+            # не держат. Включать автоматически — значит тратить время
+            # на неудачные попытки там же. Поэтому допуск остаётся, а выбор
+            # отдан завучу: режим «Ровные дни: жёстко» даёт идеальный коридор
+            # без допуска, и на Жемчужненской это разброс 20 вместо 34.
             hard_low = max(1, low - 1)
-            hard_high = min(school.periods_per_day, high + 1)
+            hard_high = min(win_to - win_from + 1, high + 1)
             for count in per_day:
                 if rules.is_hard("even_days"):
                     # «Жёстко» — идеальный коридор без допуска: дни выходят
@@ -981,9 +1003,18 @@ def _solve(
                 model.Add(over >= count - high)
                 # Вес больше обычного разброса: отклонение от идеального
                 # коридора — это ровно тот день из четырёх уроков, ради
-                # которого коридор и вводился.
+                # которого коридор и вводился. Второй урок сверх коридора
+                # штрафуется вчетверо: один лишний урок — мелочь, два —
+                # это уже день на восемь рядом с днём на пять.
                 penalties.append((short, w.class_imbalance * 8))
                 penalties.append((over, w.class_imbalance * 8))
+                far = model.NewIntVar(0, school.periods_per_day, f"far_{count.Name()}")
+                model.Add(far >= count - high - 1)
+                penalties.append((far, w.class_imbalance * 24))
+                # ...и день короче идеала на два урока — тоже день впустую.
+                barely = model.NewIntVar(0, school.periods_per_day, f"barely_{count.Name()}")
+                model.Add(barely >= low - 1 - count)
+                penalties.append((barely, w.class_imbalance * 24))
 
         day_max = model.NewIntVar(0, school.periods_per_day, f"max_{class_id}")
         day_min = model.NewIntVar(0, school.periods_per_day, f"min_{class_id}")
@@ -1701,6 +1732,26 @@ def solve(
     draft = _solve(school, max_seconds=max_seconds * share, optimize=True,
                    soft_norms=True, norms_only=not TUNING["draft_comfort"], on_progress=on_progress,
                    phase="draft", hint=hint, stay=stay, stay_weight=1 if stay else 0, **common)
+
+    # «Ровные дни: жёстко» — идеальный коридор без допуска: дни выходят ровно
+    # 6–7 вместо 5–8. Там, где школа его держит, он лучше по всем статьям
+    # (Жемчужненская 22.09.2026: разброс 16 против 34, окна 33 против 41).
+    # Там, где не держит, он раньше отдавал ПУСТОЙ ЭКРАН — завуч нажимал
+    # переключатель и получал «расписание не находится» без объяснения
+    # (школа из примера, тот же замер). Теперь режим сам отступает на «мягко»
+    # и говорит об этом: строгость дней не стоит отсутствия расписания.
+    if not draft.ok and rules.is_hard("even_days") and left() > 10:
+        softer = replace(rules, even_days="soft")
+        relaxed = dict(common, rules=softer)
+        draft = _solve(school, max_seconds=left() * share, optimize=True,
+                       soft_norms=True, norms_only=not TUNING["draft_comfort"],
+                       on_progress=on_progress, phase="draft", hint=hint, stay=stay,
+                       stay_weight=1 if stay else 0, **relaxed)
+        if draft.ok:
+            rules, common = softer, relaxed
+            draft.relaxed = [*draft.relaxed,
+                             "Ровное число уроков в дне — с допуском: без него "
+                             "расписания у этой школы не существует"]
     if not draft.ok:
         return draft
 
@@ -1719,10 +1770,24 @@ def solve(
         # нарушений. Замер 16.09.2026: 43 нарушения и 711 переставленных уроков.
         cap = (_norm_violations(school, draft.lessons)
                if (stay or TUNING["draft_comfort"]) else draft.penalty)
-        final = _solve(school, max_seconds=left(), optimize=True, soft_norms=True,
-                       norm_cap=cap, hint=draft.lessons, on_progress=on_progress,
-                       hierarchical=hierarchical, stay=stay,
-                       stay_weight=int(TUNING["stay_weight"]) if stay else 0, **common)
+        polish = dict(optimize=True, soft_norms=True, norm_cap=cap,
+                      on_progress=on_progress, hierarchical=hierarchical, stay=stay,
+                      stay_weight=int(TUNING["stay_weight"]) if stay else 0, **common)
+        # ПОЛ КОРИДОРА — попытка доводки, а не условие задачи. Жёсткий пол
+        # («день не короче идеала») убирает у класса день на пять рядом с днём
+        # на восемь, но не всякая школа его выдержит: на школе из примера
+        # с ним не находится ничего. Спрашивать заранее пробой оказалось дорого
+        # — на ту же школу это стоило десяти секунд и незакрытой нормы
+        # (замер 22.09.2026). Поэтому пробуем на половине времени доводки,
+        # и если не вышло — доводим обычным коридором. Черновик с его нормами
+        # при этом не трогаем вовсе, так что платы за неудачу нет.
+        # Пол коридора («день не короче идеала») пробовали включать
+        # автоматически — отдельной пробой перед запуском и коротким подходом
+        # внутри доводки. Оба способа отброшены 22.09.2026: неудачная попытка
+        # съедает время у норм, и школа из примера возвращалась с незакрытой
+        # нормой, а выигрыш на Жемчужненской скакал от сида к сиду.
+        # Пол остаётся у режима «Ровные дни: жёстко» — им распоряжается завуч.
+        final = _solve(school, max_seconds=left(), hint=draft.lessons, **polish)
         if final.ok:
             final.wall_time = time.monotonic() - started
             return final
@@ -1858,8 +1923,10 @@ RULE_SOURCES = {
     "peak_days": "п. 94 ССЭТ № 525",
     "difficulty_balance": "п. 88.2 СанПиН № 206",
     "even_days": "не норма, а качество расписания. «Мягко» — коридор с допуском "
-                  "в один урок, расписание находится всегда. «Жёстко» — идеальная "
-                  "ровность, но поиск тяжелеет и решения может не быть",
+                  "в один урок: у класса может выйти день на 5 уроков рядом с днём "
+                  "на 8. «Жёстко» — дни ровные, по 6–7; если школа этого не "
+                  "выдержит, система сама вернётся к допуску и скажет об этом. "
+                  "Начинать стоит с «жёстко»",
     "teacher_wishes": "не норма, а договорённости внутри школы",
 }
 
