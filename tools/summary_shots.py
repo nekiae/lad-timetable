@@ -21,6 +21,27 @@ BASE = "http://127.0.0.1:8000"
 WIDE = {"width": 1440, "height": 900}
 
 
+def latest_id(school: str) -> str | None:
+    """Какое расписание сейчас текущее — чтобы вернуть его после съёмки."""
+    import urllib.request, json  # noqa: E401 — локально, только для этого скрипта
+    try:
+        with urllib.request.urlopen(f"{BASE}/api/schools/{school}/schedules/latest") as r:
+            return json.load(r).get("id")
+    except Exception:
+        return None
+
+
+def restore(school: str, schedule_id: str) -> None:
+    """Вернуть прежнее расписание текущим."""
+    import urllib.request
+    request = urllib.request.Request(
+        f"{BASE}/api/schools/{school}/schedules/{schedule_id}/restore", method="POST")
+    try:
+        urllib.request.urlopen(request).read()
+    except Exception:
+        pass
+
+
 def hide_names(page) -> None:
     """Общий переключатель в шапке. На печати он свой — там та же подпись."""
     for label in ("Скрыть ФИО", "Скрыть ФИО учителей"):
@@ -49,6 +70,13 @@ def shoot(school: str) -> None:
         hide_names(page)
 
         # 1. Солвер на ходу: живые цифры, пока идёт составление.
+        #
+        # ⚠️ Этот кадр ПЕРЕЗАПИСЫВАЕТ расписание школы: прогон ради картинки
+        # длится минуту и его результат становится текущим. Хорошую сетку,
+        # которую искали пятнадцать минут, он затирал сеткой на 336 окон
+        # (поймано 22.09.2026 — на всех остальных кадрах стояли её цифры).
+        # Поэтому помним, что было, и возвращаем это в конце.
+        before = latest_id(school)
         page.goto(f"{BASE}/s/{school}")
         page.wait_for_load_state("networkidle")
         start = page.get_by_role("button", name="Составить расписание")
@@ -65,6 +93,8 @@ def shoot(school: str) -> None:
             if stop.count():
                 stop.first.click()
                 page.wait_for_timeout(5000)
+        if before:
+            restore(school, before)
 
         # 2. Готовая неделя школы.
         page.goto(f"{BASE}/s/{school}/schedule")
