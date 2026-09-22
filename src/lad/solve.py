@@ -816,6 +816,50 @@ def _solve(
                     >= busy[class_id, Slot(day, period + 1, shift)]
                 )
 
+    # --- HARD-8б: лишний час профиля — в конец дня, а не в середину.
+    #
+    # Класс без окон — ещё не значит, что без окон каждый. Профильная группа
+    # берёт математику шесть часов, базовая четыре; четыре общих стоят вместе
+    # (HARD-9), а два оставшихся — урок только для профиля. Попади он в середину
+    # дня, у базовой группы форточка: полкласса сидит и ждёт. Школа так не
+    # ставит — профиль и база идут одновременно в разных кабинетах, а лишние
+    # часы профиля последними уроками, и база уходит раньше (найдено 22.09.2026
+    # у 11«Б»: «Матем. (повышенная)» третьим уроком).
+    #
+    # Считать «занята ли конкретная группа» нельзя: деления пересекаются —
+    # ученик профильной группы по математике сидит в первой группе
+    # по информатике, и во время информатики он занят. Поэтому смотрим
+    # на слот класса: если в нём стоит РОВНО ОДИН урок и это урок подгруппы,
+    # значит часть класса свободна. Такие слоты обязаны идти в хвосте дня.
+    for class_id, whole_rows in whole.items():
+        class_rows = whole_rows + [
+            i for (cid, _), v in parts.items() if cid == class_id for i in v
+        ]
+        if len(class_rows) == len(whole_rows):
+            continue  # делений нет — и хвоста нет
+        first_period, last_period = school.class_window(class_id)
+        full = {}
+        for slot in slots:
+            count = sum(x[i, slot] for i in class_rows)
+            whole_busy = sum(x[i, slot] for i in whole_rows)
+            # two = «в слоте два урока и больше»: класс идёт параллельно
+            # двумя подгруппами, то есть занят целиком.
+            two = model.NewBoolVar(f"two_{class_id}_{slot}")
+            model.Add(count >= 2).OnlyEnforceIf(two)
+            model.Add(count <= 1).OnlyEnforceIf(two.Not())
+            solo = model.NewBoolVar(f"solo_{class_id}_{slot}")
+            model.Add(solo <= busy[class_id, slot])
+            model.Add(solo + whole_busy <= 1)
+            model.Add(solo + two <= 1)
+            model.Add(solo >= busy[class_id, slot] - whole_busy - two)
+            here = model.NewBoolVar(f"full_{class_id}_{slot}")
+            model.Add(here == busy[class_id, slot] - solo)
+            full[slot] = here
+        for day in {s.day for s in slots}:
+            for period in range(first_period, last_period):
+                model.Add(full[Slot(day, period, shift)]
+                          >= full[Slot(day, period + 1, shift)])
+
     # --- Адресные пожелания-числа, которые касаются всего дня класса.
     _subject_name = {sub.id: sub.name for sub in school.subjects}
     # Подгруппы одного деления стоят в один час, поэтому в счёте «сколько
