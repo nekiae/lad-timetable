@@ -38,7 +38,7 @@ export function DifficultyMap({ dir, lessons, onClass }: {
         <p className="text-heading">Трудность по дням</p>
         <p className="text-small text-pencil">
           Сумма баллов трудности уроков за день. Чем темнее, тем тяжелее день для этого класса.
-          «!» — самый трудный день не во вторник, среду или пятницу (п. 94 ССЭТ): таких классов {offPeak}.
+          «!» — самый трудный день не в дни пика нагрузки (п. 94 ССЭТ или выбор школы): таких классов {offPeak}.
         </p>
       </div>
       <div className="mt-3 overflow-x-auto">

@@ -236,16 +236,17 @@ def _difficulty_sheet(sheet, school: School, lessons: list[Lesson]) -> None:
         ok = not peak_days or any(d in peak_days for d in heaviest)
         verdict = ", ".join(DAY_NAMES.get(d, str(d)).lower() for d in heaviest)
         if not ok:
-            verdict += " — не в рекомендованный день"
+            verdict += " — не в день пика"
         sheet.cell(row=row, column=len(days) + 3, value=verdict).border = BORDER
         row += 1
 
     row += 1
+    peak_names = ", ".join(DAY_NAMES.get(d, str(d)).lower()
+                           for d in school.norms.peak_days(5) if d in days)
     sheet.cell(row=row, column=1, value=(
         "Балл предмета — по ранговой шкале трудности (приложение 6 ССЭТ № 525). "
-        "Пик нагрузки — во вторник, среду и (или) пятницу для V–XI классов, "
-        "во вторник и (или) среду для I–IV (п. 94). Зелёный — самый трудный день "
-        "в рекомендованный день, красный — нет."))
+        f"Дни пика нагрузки: {peak_names} (п. 94 ССЭТ или выбор школы). "
+        "Зелёный — самый трудный день пришёлся на день пика, красный — нет."))
     if unscored:
         row += 2
         sheet.cell(row=row, column=1, value="Предметов нет в шкале ССЭТ (или они названы иначе) — в суммы не вошли:").font = Font(bold=True)

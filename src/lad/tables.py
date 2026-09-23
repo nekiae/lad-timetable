@@ -7,6 +7,7 @@
 
 import json
 import re
+from dataclasses import replace
 import time
 from pathlib import Path
 
@@ -440,6 +441,15 @@ def build_school(tables: dict[str, pd.DataFrame], settings: dict,
         norms=load_norms(),  # санитарные нормы из первоисточника, если файл есть
     )
 
+    # Дни пика нагрузки — выбор школы поверх п. 94. Норма говорит «вторник,
+    # среду и (или) пятницу», а завуч Жемчужненской СШ ставит пик во вторник,
+    # четверг и пятницу (23.09.2026). Школа знает свой режим лучше нас: выбор
+    # применяется ко всем классам, а check_norms говорит, где он расходится
+    # с нормой. Пустой выбор — как в норме.
+    chosen = sorted({int(d) for d in (settings.get("peak_days") or []) if 1 <= int(d) <= lesson_days})
+    if chosen:
+        school.norms = replace(school.norms, peak_days_1_4=chosen, peak_days_5_11=chosen)
+
     # Арифметическая проверка до солвера — чтобы не получить голое INFEASIBLE
     # (docs/domain.md §4.8).
     slots_per_week = len(school.lesson_slots())
@@ -604,6 +614,22 @@ def check_norms(school: School) -> list[str]:
     warnings: list[str] = []
     if not school.norms.max_hours_per_week:
         return warnings
+
+    norm = load_norms()
+    names = {1: "понедельник", 2: "вторник", 3: "среда", 4: "четверг", 5: "пятница", 6: "суббота"}
+    for title, chosen, allowed in (
+            ("V–XI", school.norms.peak_days_5_11, norm.peak_days_5_11),
+            ("I–IV", school.norms.peak_days_1_4, norm.peak_days_1_4)):
+        if title == "I–IV" and not any(c.parallel <= 4 for c in school.classes):
+            continue
+        outside = [d for d in chosen if allowed and d not in allowed]
+        if outside:
+            warnings.append(
+                f"Пик нагрузки школа поставила на {', '.join(names.get(d, str(d)) for d in outside)} "
+                f"— для {title} классов п. 94 ССЭТ № 525 называет "
+                f"{', '.join(names.get(d, str(d)) for d in allowed)}. Расписание составится "
+                f"по выбору школы; при проверке сошлитесь на свой режим работы.")
+
     for c in school.classes:
         # Подгруппы не удваивают нагрузку класса: пока одна половина на труде,
         # вторая тоже занята. В сетке это один слот, значит и час один.

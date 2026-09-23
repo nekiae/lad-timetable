@@ -120,6 +120,15 @@ export function SchoolPage() {
     api.saveSchool(id, saved);
   }
 
+  // Дни пика нагрузки — выбор школы поверх п. 94. Пусто — как в норме.
+  const peakDays: number[] = (doc?.settings?.peak_days as number[] | undefined) ?? [];
+  function setPeakDays(days: number[]) {
+    if (!doc) return;
+    const saved = { ...doc, settings: { ...doc.settings, peak_days: days } };
+    setDoc(saved);
+    api.saveSchool(id, saved);
+  }
+
   function setPref(key: string, value: number) {
     const next = { ...prefs, [key]: value };
     setPrefs(next);
@@ -265,6 +274,9 @@ export function SchoolPage() {
                             {prefNote(pref.key, gymTight, prefs.light_day_of_week ?? 5)}
                           </span>
                         )}
+                        {pref.key === "peak_day" && level > 0 && (
+                          <PeakDays chosen={peakDays} onChange={setPeakDays} />
+                        )}
                         {pref.key === "light_day" && level > 0 && (
                           <label className="mt-2 flex items-center gap-2 text-small">
                             Какой день:
@@ -390,6 +402,48 @@ export function SchoolPage() {
         </Notice>
       )}
     </div>
+  );
+}
+
+// Дни пика. По норме (п. 94 ССЭТ) — вторник, среда и (или) пятница в V–XI;
+// школа вправе выбрать свои: у завуча Жемчужненской это вторник, четверг
+// и пятница. Выбор вне нормы не запрещён, проверка данных скажет о нём.
+const NORM_PEAK = [2, 3, 5];
+function PeakDays({ chosen, onChange }: { chosen: number[]; onChange: (days: number[]) => void }) {
+  const active = chosen.length ? chosen : NORM_PEAK;
+  const names = ["Пн", "Вт", "Ср", "Чт", "Пт"];
+  const outside = active.filter((d) => !NORM_PEAK.includes(d));
+  return (
+    <span className="mt-2 block text-small">
+      <span className="flex flex-wrap items-center gap-2">
+        Дни пика:
+        {names.map((name, n) => {
+          const day = n + 1;
+          const on = active.includes(day);
+          return (
+            <button key={name} type="button" aria-pressed={on}
+                    onClick={() => {
+                      const next = on ? active.filter((d) => d !== day) : [...active, day].sort();
+                      onChange(next.length ? next : []);
+                    }}
+                    className={cx("rounded border px-2 py-0.5",
+                                  on ? "border-pen bg-pen text-white" : "border-rule text-ink hover:bg-paper")}>
+              {name}
+            </button>
+          );
+        })}
+        {chosen.length > 0 && (
+          <button type="button" className="text-pencil underline-offset-4 hover:underline"
+                  onClick={() => onChange([])}>как в норме</button>
+        )}
+      </span>
+      {outside.length > 0 && (
+        <span className="mt-1 block text-worse">
+          П. 94 ССЭТ называет вторник, среду и (или) пятницу. Расписание составится по выбору
+          школы, а при проверке придётся сослаться на свой режим работы.
+        </span>
+      )}
+    </span>
   );
 }
 
