@@ -14,7 +14,7 @@ from pathlib import Path
 import pandas as pd
 
 from .model import (
-    HISTORY_PARTS, SUBJECT_ALIASES, DayKind, LessonKind, Level, LoadItem, Room, RoomKind, School, SchoolClass,
+    HISTORY_PARTS, SUBJECT_ALIASES, lesson_streams, DayKind, LessonKind, Level, LoadItem, Room, RoomKind, School, SchoolClass,
     Shift, Slot, StudyGroup, Subject, Teacher,
 )
 from .storage import load_norms
@@ -526,6 +526,40 @@ def build_school(tables: dict[str, pd.DataFrame], settings: dict,
                 f"в неделю не поместится: уберите лишние часы из нагрузки "
                 f"или добавьте урок в день"
             )
+
+    # То же для потока: «база не позже 4-го урока» — это 4 места в день на
+    # всё, что касается базы, включая уроки всего класса. Не влезает —
+    # говорим здесь, с цифрами, а не пустым экраном после составления.
+    stream_caps = {}
+    for row in (targeted or []):
+        if row.get("scope") == "stream" and row.get("key") == "end_by":
+            try:
+                number = int(row.get("value") or 0)
+            except (TypeError, ValueError):
+                continue
+            name = str(row.get("who") or "").strip()
+            if name and number:
+                stream_caps[name] = min(number, stream_caps.get(name, number))
+    for c in classes:
+        streams_here = school.class_streams(c.id)
+        for name, cap in stream_caps.items():
+            if name not in streams_here:
+                continue
+            by_subject: dict[tuple[str, str], int] = {}
+            for item in load:
+                group = groups[item.group_id]
+                if c.id not in group.class_ids or name not in lesson_streams(item, streams_here):
+                    continue
+                key = (item.subject_id, "" if item.streams or group.part is None else "split")
+                by_subject[key] = max(by_subject.get(key, 0), item.hours_per_week) \
+                    if key[1] else by_subject.get(key, 0) + item.hours_per_week
+            hours = sum(by_subject.values())
+            if hours > cap * lesson_days:
+                problems.append(
+                    f"у потока «{name}» в классе {c.name} {hours} "
+                    f"{plural(hours, 'урок', 'урока', 'уроков')} в неделю, а вы задали "
+                    f"«заканчивать не позже {cap}-го урока» — это {cap * lesson_days} мест. "
+                    f"Поднимите номер урока или уберите часы у этого потока")
 
     # Кабинетов должно хватать на все классы, которые учатся ОДНОВРЕМЕННО.
     # Класс учится без окон, значит на первом уроке своей смены в школе сидят

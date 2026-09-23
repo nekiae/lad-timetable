@@ -20,7 +20,7 @@ const STRICT: [string, string][] = [["hard", "Жёстко"], ["soft", "Мягк
 const DAYS = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"];
 const SCOPE_TITLES: Record<string, string> = {
   school: "Вся школа", parallel: "Параллель", class: "Класс",
-  teacher: "Учитель", subject: "Предмет",
+  teacher: "Учитель", subject: "Предмет", stream: "Поток",
 };
 
 const field =
@@ -49,6 +49,9 @@ export function TargetedPrefs({ id, doc, aims, onChange, choices }: {
   const teachers = column("teachers", "ФИО");
   const subjects = [...new Set(column("subjects", "предмет"))];
   const parallels = [...new Set(classes.map((c) => c.match(/^\d+/)?.[0] ?? ""))].filter(Boolean);
+  // Потоки — из колонки «поток» нагрузки, несколько через запятую.
+  const streams = [...new Set(column("load", "поток")
+    .flatMap((v) => v.split(/[,;]/)).map((v) => v.trim()).filter(Boolean))].sort();
 
   const choiceOf = (key: string) => choices.find((c) => c.key === key);
   const kindOf = (key: string) => choiceOf(key)?.kind ?? "level";
@@ -91,6 +94,7 @@ export function TargetedPrefs({ id, doc, aims, onChange, choices }: {
     if (scope === "teacher") return teachers;
     if (scope === "subject") return subjects;
     if (scope === "parallel") return parallels;
+    if (scope === "stream") return streams;
     return [];
   }
 

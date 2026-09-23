@@ -66,7 +66,8 @@ class Weights:
 
 # Кому адресовано пожелание. Частное перебивает общее: правило для 11«А»
 # сильнее правила для всех одиннадцатых, а оно — сильнее правила для школы.
-SCOPE_RANK = {"school": 0, "parallel": 1, "class": 2, "teacher": 2, "subject": 2}
+# Поток — часть класса («база», «физмат»), поэтому он частнее класса.
+SCOPE_RANK = {"school": 0, "parallel": 1, "class": 2, "teacher": 2, "subject": 2, "stream": 3}
 
 # Адресные пожелания-числа: те, у которых значение не «насколько важно»,
 # а величина — «не больше шести уроков в день», «не позже седьмого».
@@ -77,7 +78,7 @@ AIMS = [
      "about": "Потолок для класса. Часы всё равно выданы все, поэтому потолок "
               "ниже, чем нагрузка позволяет, сделает расписание невозможным."},
     {"key": "end_by", "title": "Заканчивать не позже урока",
-     "kind": "number", "min": 3, "max": 10, "scopes": ["school", "parallel", "class"],
+     "kind": "number", "min": 3, "max": 10, "scopes": ["school", "parallel", "class", "stream"],
      "about": "Номер внутри своей смены: у второй смены шестой урок — это "
               "последний. Нужно там, где детей ждёт автобус."},
     {"key": "hard_per_day", "title": "Не больше трудных предметов в день",
@@ -111,7 +112,7 @@ class Targeted:
 
     def matching(self, key: str, *, class_id: str | None = None,
                  parallel: int | None = None, teacher: str | None = None,
-                 subject: str | None = None) -> list[dict]:
+                 subject: str | None = None, stream: str | None = None) -> list[dict]:
         """Все записи этого пожелания, подходящие по адресу."""
         out = []
         for row in self.rows:
@@ -126,6 +127,8 @@ class Targeted:
             if scope == "teacher" and who != (teacher or ""):
                 continue
             if scope == "subject" and who != (subject or ""):
+                continue
+            if scope == "stream" and who != (stream or ""):
                 continue
             if scope == "parallel" and who != (str(parallel) if parallel else ""):
                 continue
@@ -999,6 +1002,18 @@ def _solve(
                 var = model.NewBoolVar(f"sb_{class_id}_{stream}_{slot}")
                 model.AddMaxEquality(var, [x[i, slot] for i in mine])
                 present[slot] = var
+            # «У базы уроки заканчиваются четвёртым, профили — до шестого»
+            # (завуч Жемчужненской СШ, 23.09.2026). Потолок дня адресуется
+            # потоку по имени и действует в каждом классе, где такой поток есть:
+            # «база не позже 4-го» — одной записью на всю школу. Номер — внутри
+            # своей смены, как у класса.
+            stream_end = [int(r.get("value") or 0) for r in aim.matching("end_by", stream=stream)
+                          if r.get("scope") == "stream"]
+            if stream_end and min(stream_end) > 0:
+                last_allowed = min(last_period, first_period + min(stream_end) - 1)
+                for slot in slots:
+                    if slot.period > last_allowed:
+                        model.Add(present[slot] == 0)
             for day in {sl.day for sl in slots}:
                 for period in range(first_period, last_period):
                     model.Add(present[Slot(day, period, shift)]
