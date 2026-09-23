@@ -9,6 +9,7 @@ Excel — то, в чём завуч работает: печатает, пра�
   «Классы»   — что у 7А в среду (сетка класс × слот, то же, что висит в коридоре);
   «Учителя»  — где Иванова в четверг третьим уроком (её личное расписание);
   «Кабинеты» — свободен ли спортзал во вторник вторым;
+  «Трудность» — сколько баллов трудности у класса в каждый день и где пик;
   «Проверка» — метрики и список нарушений, чтобы цифры можно было перепроверить.
 
 Модуль ничего не знает про солвер: на вход — те же уроки, что и у рендера
@@ -138,7 +139,9 @@ def build_workbook(school: School, lessons: list[Lesson], anonymize: bool = Fals
     _grid_sheet(sheet, school, room_ids, room_ids,
                 {k: "\n".join(v) for k, v in by_room.items()}, width=20)
 
-    # --- лист 4: проверка
+    _difficulty_sheet(book.create_sheet("Трудность"), school, lessons)
+
+    # --- лист 5: проверка
     sheet = book.create_sheet("Проверка")
     report = check(school, lessons)
     _header(sheet, ["Показатель", "Значение"], freeze="A2")
@@ -169,6 +172,87 @@ def build_workbook(school: School, lessons: list[Lesson], anonymize: bool = Fals
         sheet.cell(row=row, column=1, value="Нарушений не найдено")
 
     return book
+
+
+PEAK_FILL = PatternFill("solid", fgColor="C6E0B4")
+WRONG_PEAK_FILL = PatternFill("solid", fgColor="F8CBAD")
+
+
+def _difficulty_sheet(sheet, school: School, lessons: list[Lesson]) -> None:
+    """Баллы трудности по дням — то, как расписание проверяет завуч.
+
+    Завуч Жемчужненской СШ (23.09.2026): «нужно расписание по баллам посчитать».
+    Так его и проверяют руками: у каждого предмета балл по ранговой шкале
+    (приложение 6 ССЭТ № 525), сумма за день должна достигать пика в дни наибольшей
+    работоспособности (п. 94). Лист считает это за неё: строка — класс,
+    столбец — день, самый тяжёлый день отмечен зелёным, если он в рекомендованный
+    день, и красным, если нет. Предметы, которых нет в шкале, перечислены
+    внизу: их баллы не посчитаны, и сумма по ним занижена.
+    """
+    subjects = {s.id: s.name for s in school.subjects}
+    days = [d for d, kind in sorted(school.day_kinds.items()) if kind == DayKind.LESSONS]
+    parallel = {c.id: c.parallel for c in school.classes}
+
+    # Подгруппы одного деления стоят в одном часе — предмет в часе считается один раз.
+    seen: set = set()
+    score: dict = defaultdict(int)
+    unscored: dict[str, set[str]] = defaultdict(set)
+    for lesson in lessons:
+        name = subjects.get(lesson.subject_id, "")
+        for class_id in school.group(lesson.group_id).class_ids:
+            key = (class_id, lesson.slot.day, lesson.slot.period, lesson.subject_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            points = school.norms.difficulty(name, parallel.get(class_id, 0))
+            if points is None:
+                unscored[name].add(class_id)
+            score[class_id, lesson.slot.day] += points or 0
+
+    _header(sheet, ["Класс"] + [DAY_NAMES.get(d, str(d)) for d in days]
+            + ["За неделю", "Самый трудный день"])
+    sheet.column_dimensions["A"].width = 10
+    for n in range(len(days) + 1):
+        sheet.column_dimensions[get_column_letter(n + 2)].width = 13
+    sheet.column_dimensions[get_column_letter(len(days) + 3)].width = 30
+
+    row = 2
+    for school_class in school.classes:
+        values = [score[school_class.id, d] for d in days]
+        if not any(values):
+            continue
+        peak_days = [d for d in school.norms.peak_days(school_class.parallel or 5) if d in days]
+        top = max(values)
+        sheet.cell(row=row, column=1, value=school_class.name).border = BORDER
+        for n, (day, value) in enumerate(zip(days, values)):
+            cell = sheet.cell(row=row, column=n + 2, value=value)
+            cell.border, cell.alignment = BORDER, Alignment(horizontal="center")
+            if value == top:
+                cell.font = Font(bold=True)
+                cell.fill = PEAK_FILL if (not peak_days or day in peak_days) else WRONG_PEAK_FILL
+        total = sheet.cell(row=row, column=len(days) + 2, value=sum(values))
+        total.border, total.alignment = BORDER, Alignment(horizontal="center")
+        heaviest = [d for d, v in zip(days, values) if v == top]
+        ok = not peak_days or any(d in peak_days for d in heaviest)
+        verdict = ", ".join(DAY_NAMES.get(d, str(d)).lower() for d in heaviest)
+        if not ok:
+            verdict += " — не в рекомендованный день"
+        sheet.cell(row=row, column=len(days) + 3, value=verdict).border = BORDER
+        row += 1
+
+    row += 1
+    sheet.cell(row=row, column=1, value=(
+        "Балл предмета — по ранговой шкале трудности (приложение 6 ССЭТ № 525). "
+        "Пик нагрузки — во вторник, среду и (или) пятницу для V–XI классов, "
+        "во вторник и (или) среду для I–IV (п. 94). Зелёный — самый трудный день "
+        "в рекомендованный день, красный — нет."))
+    if unscored:
+        row += 2
+        sheet.cell(row=row, column=1, value="Предметов нет в шкале ССЭТ (или они названы иначе) — в суммы не вошли:").font = Font(bold=True)
+        for name in sorted(unscored):
+            row += 1
+            classes = ", ".join(sorted(unscored[name]))
+            sheet.cell(row=row, column=1, value=f"{name or '?'} — {classes}")
 
 
 def to_bytes(school: School, lessons: list[Lesson], anonymize: bool = False) -> bytes:

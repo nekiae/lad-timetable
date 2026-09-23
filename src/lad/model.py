@@ -373,11 +373,33 @@ class Norms:
         return not (self.max_hours_per_week or self.max_lessons_per_day)
 
     def difficulty(self, subject_name: str, parallel: int) -> int | None:
-        """Балл трудности предмета для параллели. None = нормы не покрывают."""
-        by_parallel = self.difficulty_scale.get(subject_name)
-        if not by_parallel:
-            return None
-        return by_parallel.get(parallel) or by_parallel.get(str(parallel))
+        """Балл трудности предмета для параллели. None = нормы не покрывают.
+
+        Название приводится к шкале: школа пишет «Английский язык», шкала —
+        «Иностранный язык». Без этого у английского, истории и ОБЖ балла не было
+        вовсе, и трудность недели считалась без них (найдено 23.09.2026 на
+        Жемчужненской СШ: у всех 24 классов).
+
+        «История» одной строкой — это два предмета шкалы, всемирная история
+        и история Беларуси. Их баллы отличаются на единицу; берём больший.
+        """
+        def lookup(name: str) -> int | None:
+            by_parallel = self.difficulty_scale.get(name)
+            if not by_parallel:
+                return None
+            return by_parallel.get(parallel) or by_parallel.get(str(parallel))
+
+        name = canonical_subject(subject_name)
+        if name == "История":
+            found = [lookup(part) for part in HISTORY_PARTS]
+            return max((v for v in found if v), default=None)
+        if self.is_pe(name):
+            name = next((n for n in self.difficulty_scale if self.is_pe(n)), name)
+        return lookup(name)
+
+    def is_labour(self, subject_name: str) -> bool:
+        """Труд ли это — предмет, которому норма разрешает пару (п. 65 ССЭТ)."""
+        return canonical_subject(subject_name) in self.double_always_allowed
 
     def hours_limit(self, parallel: int, advanced: bool = False) -> int | None:
         """Предельная недельная нагрузка с учётом повышенного уровня."""
@@ -390,7 +412,10 @@ class Norms:
         return self.peak_days_1_4 if parallel <= 4 else self.peak_days_5_11
 
     def is_hard_subject(self, subject_name: str) -> bool:
-        return subject_name in self.hard_subjects
+        # Через общий словарь названий: «Английский язык» — это «иностранный
+        # язык» п. 94. Без этого норма про край дня к английскому не применялась
+        # вовсе (23.09.2026).
+        return canonical_subject(subject_name) in self.hard_subjects
 
     def double_allowed(self, subject_name: str, parallel: int, advanced: bool) -> bool:
         """Можно ли ставить два урока этого предмета в один день подряд.
@@ -400,7 +425,7 @@ class Norms:
         """
         if self.is_pe(subject_name) or subject_name in self.double_forbidden_subjects:
             return False
-        if subject_name in self.double_always_allowed:
+        if self.is_labour(subject_name):
             least = self.double_min_parallel_for_labour
             return least is None or parallel >= least
         return advanced and parallel in self.double_advanced_parallels
@@ -478,6 +503,34 @@ class School:
 
 # Поток «весь класс» для класса, где школа потоков не называла: тогда любой
 # урок касается всех детей, и правило вырождается в прежнее «один урок в час».
+# Как школы называют предметы и как они называются в нормах и типовом плане.
+# Школа пишет «Английский язык», «МХК», «Труд»; ССЭТ и план — «Иностранный
+# язык», «Искусство…», «Трудовое обучение». Одно место на весь код: иначе
+# шкала трудности, план и правило пар узнают предмет каждый по-своему.
+SUBJECT_ALIASES = {
+    "английский язык": "Иностранный язык", "немецкий язык": "Иностранный язык",
+    "французский язык": "Иностранный язык", "испанский язык": "Иностранный язык",
+    "китайский язык": "Иностранный язык", "иностранный язык": "Иностранный язык",
+    "мхк": "Искусство (отечественная и мировая художественная культура)",
+    "искусство": "Искусство (отечественная и мировая художественная культура)",
+    "обж": "Основы безопасности жизнедеятельности",
+    "физкультура": "Физическая культура и здоровье",
+    "труд": "Трудовое обучение", "трудовое": "Трудовое обучение",
+    "допризывная подготовка": "Допризывная и медицинская подготовка",
+    "медицинская подготовка": "Допризывная и медицинская подготовка",
+    "история": "История",
+}
+# «История» одной строкой: в шкале и в плане это отдельные предметы.
+HISTORY_PARTS = ("Всемирная история", "История Беларуси",
+                 "История Беларуси в контексте всемирной истории")
+
+
+def canonical_subject(name: str) -> str:
+    """Название предмета так, как его пишут нормы и типовой план."""
+    key = " ".join(name.replace("ё", "е").split()).lower()
+    return SUBJECT_ALIASES.get(key, name.strip())
+
+
 ALL_STREAMS = "*"
 
 

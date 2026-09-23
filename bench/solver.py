@@ -134,7 +134,7 @@ def main() -> None:
               f"diff={row.get('difficulty_spread')} conflicts={row.get('conflicts')} tail={row['tail']}", flush=True)
         print(f"         логика: дни±3={row.get('classes_spread_3plus')} Пн-пик={row.get('monday_heavy')} "
               f"2ч-подряд={row.get('adjacent_two')} 3ч-подряд={row.get('three_in_row')} "
-              f"день-ради-урока={row.get('teacher_single_days')} длинный-день={row.get('teacher_longest_day')}",
+              f"день-ради-урока={row.get('teacher_single_days')} длинный-день={row.get('teacher_longest_day')} труд-один={row.get('labour_single')}",
               flush=True)
         if args.out:
             with open(args.out, "a", encoding="utf-8") as f:
@@ -150,7 +150,7 @@ def main() -> None:
           f"gaps={median('teacher_gaps')} days={median('teacher_days')} spread={median('class_spread')}")
     print(f"           дни±3={median('classes_spread_3plus')} Пн-пик={median('monday_heavy')} "
           f"2ч-подряд={median('adjacent_two')} 3ч-подряд={median('three_in_row')} "
-          f"день-ради-урока={median('teacher_single_days')}")
+          f"день-ради-урока={median('teacher_single_days')} труд-один={median('labour_single')}")
 
 
 if __name__ == "__main__":

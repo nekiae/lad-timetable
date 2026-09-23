@@ -71,6 +71,18 @@ def measure(school: School, lessons: list[Lesson]) -> dict:
     single = sum(1 for by_day in teacher_days.values() for n in by_day.values() if n == 1)
     longest = max((n for by_day in teacher_days.values() for n in by_day.values()), default=0)
 
+    # 6. Труд одиночным уроком там, где часов на пару хватает (п. 65 ССЭТ
+    # разрешает пару с V класса). Подгруппы стоят в одни часы — считаем часы.
+    labour_hours: dict[tuple[str, int], set[int]] = defaultdict(set)
+    for lesson in lessons:
+        if school.norms.is_labour(subjects.get(lesson.subject_id, "")):
+            for class_id in groups[lesson.group_id].class_ids:
+                labour_hours[class_id, lesson.slot.day].add(lesson.slot.period)
+    labour_single = sorted(f"{c}, день {d}" for (c, d), periods in labour_hours.items()
+                           if len(periods) == 1
+                           and sum(len(v) for (c2, _), v in labour_hours.items() if c2 == c) % 2 == 0
+                           and parallel.get(c, 0) >= (school.norms.double_min_parallel_for_labour or 0))
+
     return {
         "day_spread_max": max(spreads.values(), default=0),
         "classes_spread_3plus": sum(1 for v in spreads.values() if v >= 3),
@@ -79,7 +91,9 @@ def measure(school: School, lessons: list[Lesson]) -> dict:
         "three_in_row": len(three_in_row),
         "teacher_single_days": single,
         "teacher_longest_day": longest,
+        "labour_single": len(labour_single),
         "examples": {
+            "labour_single": labour_single[:5],
             "monday_heavy": monday_heavy[:5],
             "adjacent_two": adjacent_two[:5],
             "three_in_row": three_in_row[:5],

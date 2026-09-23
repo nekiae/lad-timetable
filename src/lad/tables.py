@@ -13,7 +13,7 @@ from pathlib import Path
 import pandas as pd
 
 from .model import (
-    DayKind, LessonKind, Level, LoadItem, Room, RoomKind, School, SchoolClass,
+    HISTORY_PARTS, SUBJECT_ALIASES, DayKind, LessonKind, Level, LoadItem, Room, RoomKind, School, SchoolClass,
     Shift, Slot, StudyGroup, Subject, Teacher,
 )
 from .storage import load_norms
@@ -850,23 +850,8 @@ def load_plan() -> dict:
     return json.loads(PLAN_FILE.read_text(encoding="utf-8"))
 
 
-# Как предметы школы называются в типовом плане. Школа пишет «Английский
-# язык», план — «Иностранный язык»; школа «МХК», план — «Искусство…».
-PLAN_ALIASES = {
-    "английский язык": "Иностранный язык", "немецкий язык": "Иностранный язык",
-    "французский язык": "Иностранный язык", "испанский язык": "Иностранный язык",
-    "китайский язык": "Иностранный язык",
-    "мхк": "Искусство (отечественная и мировая художественная культура)",
-    "искусство": "Искусство (отечественная и мировая художественная культура)",
-    "обж": "Основы безопасности жизнедеятельности",
-    "физкультура": "Физическая культура и здоровье",
-    "труд": "Трудовое обучение",
-    "допризывная подготовка": "Допризывная и медицинская подготовка",
-    "медицинская подготовка": "Допризывная и медицинская подготовка",
-}
-# «История» одной строкой: в V–IX это два предмета плана, в X–XI один.
-HISTORY_PARTS = ("Всемирная история", "История Беларуси",
-                 "История Беларуси в контексте всемирной истории")
+# Как предметы школы называются в типовом плане — общий словарь в model.py.
+PLAN_ALIASES = {k: v for k, v in SUBJECT_ALIASES.items() if k != "история"}
 
 
 def plan_hours_for(plan: dict, subject: str, parallel: int, advanced: bool) -> int | None:

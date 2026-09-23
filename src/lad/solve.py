@@ -61,6 +61,7 @@ class Weights:
     late_hard: int = 0  # трудные предметы не с 6-го урока
     avoid_doubles: int = 0  # поменьше сдвоенных уроков, даже где норма их разрешает
     pe_first_period: int = 0  # физкультура не первым уроком
+    labour_pairs: int | None = None  # два часа труда — одним блоком, а не двумя днями
 
 
 # Кому адресовано пожелание. Частное перебивает общее: правило для 11«А»
@@ -263,6 +264,7 @@ class Rules:
     even_days: str = "soft"  # ровное число уроков по дням (не норма, а качество)
     one_subject_at_once: str = "hard"  # в один час у класса один предмет
     teacher_wishes: str = "soft"  # пожелания учителей (не норма, а договорённость)
+    labour_pairs: str = "hard"  # два часа труда — парой (п. 65 разрешает, школы так ставят)
 
     def on(self, name: str) -> bool:
         return getattr(self, name, "off") != "off"
@@ -325,6 +327,9 @@ TUNING: dict = {
     # закреплённого. Вес сопоставим с окном учителя (10): урок двигается, только
     # если это реально что-то даёт.
     "stay_weight": 6,
+    # Штраф за день с одним уроком труда вместо пары (см. «Труд парой» в _solve).
+    # Совет завуча Жемчужненской СШ, 23.09.2026. 0 — выключено.
+    "labour_pairs": 5,
 }
 
 
@@ -686,7 +691,16 @@ def _solve(
         # «Всегда парой» — свойство предмета, заданное школой (труд), а не
         # разрешение нормы. Оно сильнее: не «можно два», а «либо два, либо ни
         # одного».
-        всегда_парой = subject_always_double.get(item.subject_id, False) \
+        # Правило «Труд парой» жёстко делает то же для труда во всех школах.
+        # Мягкий штраф здесь не работает: черновик кладёт труд по одному уроку,
+        # а доводка не умеет за ход переставить четыре связанных урока (две
+        # подгруппы по два часа) — на школе из примера одиночных уроков было 14
+        # и при весе 5, и при весе 50, а жёстко — ноль за 60 с (23.09.2026).
+        labour_hard = (school.norms.is_labour(subject_name)
+                       and any(crule("labour_pairs", rules.labour_pairs, c) == "hard"
+                               for c in group.class_ids)
+                       and school.norms.double_allowed(subject_name, parallel, True))
+        всегда_парой = (subject_always_double.get(item.subject_id, False) or labour_hard) \
             and item.hours_per_week % 2 == 0
         двойной = двойной or всегда_парой
 
@@ -1450,6 +1464,41 @@ def _solve(
             best_of_split[key] = i
     representative.update(best_of_split.values())
 
+    # --- Труд парой. Завуч Жемчужненской СШ (23.09.2026): «трудовое обучение
+    # должно стоять парочками». Так почти везде: за один урок изделие не
+    # доделать, а мастерскую не накрыть и не убрать дважды. Галочка «всегда
+    # парой» у предмета делает это запретом, но по умолчанию её нет: на школе
+    # в 24 класса пары забивают мастерские на 100 % и расписание не находится
+    # (26.08.2026). Поэтому здесь то же самое мягко и для всех школ сразу:
+    # штраф за каждый день, где у класса один урок труда вместо двух.
+    # Считаем только там, где пара возможна: часов чётно и норма разрешает
+    # сдвоенный урок (п. 65 ССЭТ: труд — с V класса).
+    labour_weight = int(w.labour_pairs if w.labour_pairs is not None else TUNING["labour_pairs"])
+    if rules.on("labour_pairs") and (labour_weight or any(r.get("key") == "labour_pairs" for r in aim.rows)):
+        always_pair = {s.id: s.always_double for s in school.subjects}
+        for i, item in enumerate(school.load):
+            if i not in representative or always_pair.get(item.subject_id):
+                continue
+            name = subject_names.get(item.subject_id, "")
+            if not school.norms.is_labour(name) or item.hours_per_week % 2:
+                continue
+            group = school.group(item.group_id)
+            parallel = max((parallels.get(c, 0) for c in group.class_ids), default=0)
+            if not school.norms.double_allowed(name, parallel, item.level != Level.BASE):
+                continue
+            pairs_here = cw("labour_pairs", labour_weight, group.class_ids[0])
+            if not pairs_here:
+                continue
+            for day in days:
+                day_vars = [x[i, s] for s in slots if s.day == day]
+                used = model.NewBoolVar(f"lab_{i}_{day}")
+                model.AddMaxEquality(used, day_vars)
+                # used=1 и один урок → 1; два урока или ни одного → 0.
+                single = model.NewIntVar(0, 1, f"labone_{i}_{day}")
+                model.Add(single >= 2 * used - sum(day_vars))
+                penalties.append((single, pairs_here))
+                trackers["Труд одиночным уроком"].append(single)
+
     # --- Разнесённость предмета по неделе (не норма — логика, lad/quality.py).
     # Предмет на 2–3 часа в соседние дни: литература в понедельник и сразу
     # во вторник — к завтрашнему уроку не подготовить домашнее. Предметам на
@@ -1503,6 +1552,7 @@ def _solve(
                         penalties.append((x[i, slot], pe_first_here))
                         trackers["Физкультура первым уроком"].append(x[i, slot])
             if (doubles_here and not always_pair.get(item.subject_id)
+                    and not (labour_weight and school.norms.is_labour(name))
                     and school.norms.double_allowed(name, parallel, item.level != Level.BASE)):
                 for day in days:
                     pair = model.NewIntVar(0, 1, f"dbl_{i}_{day}")
@@ -2177,7 +2227,9 @@ def solve(
     # и говорит об этом: строгость дней не стоит отсутствия расписания.
     # Порядок отступления: сначала ровность дней (это качество), потом
     # «один предмет в час» (это уже физика класса, и уступать её больно).
-    for rule_name in ("even_days", "one_subject_at_once"):
+    # «Труд парой» уступает первым: это привычка школ, а не норма, и на школе
+    # с мастерскими впритык пар не разложить (26.08.2026, 24 класса).
+    for rule_name in ("labour_pairs", "even_days", "one_subject_at_once"):
         if draft.ok or not rules.is_hard(rule_name) or left() <= 10:
             continue
         softer = replace(rules, **{rule_name: "soft"})
@@ -2375,6 +2427,7 @@ RULE_TITLES = {
     "even_days": "Ровное число уроков в дне",
     "one_subject_at_once": "В один час у класса один предмет",
     "teacher_wishes": "Пожелания учителей",
+    "labour_pairs": "Трудовое обучение — парой",
 }
 
 # Пункт первоисточника — отдельно от названия: в подписи под переключателем
@@ -2398,6 +2451,10 @@ RULE_SOURCES = {
                            "записано двумя предметами — «допризывная» у юношей "
                            "и «медицинская» у девушек",
     "teacher_wishes": "не норма, а договорённости внутри школы",
+    "labour_pairs": "п. 65 ССЭТ № 525 разрешает сдвоенный урок труда с V класса; "
+                    "два часа в неделю школы ставят парой, чтобы успеть доделать "
+                    "изделие. Если мастерских не хватит, система сама перейдёт "
+                    "на «мягко» и скажет об этом",
 }
 
 
