@@ -254,6 +254,10 @@ function FullTable({ schoolId, doc, input, setRows, run, onUnknown }: StepProps 
         { key: "часов", label: "Часов", type: "number", width: "w-20" },
         { key: "подгруппа", label: "Подгруппа", width: "w-24", title: "«1» и «2» при делении класса, иначе пусто." },
         { key: "уровень", label: "Уровень", type: "select", options: input.options.levels, width: "w-32" },
+        { key: "поток", label: "Поток", placeholder: "гуманитарии", width: "w-36",
+          title: "Какие дети сидят на этом уроке — «сочетание» профилей. Одни и те же "
+               + "дети не могут быть на двух уроках в один час, разные — могут. "
+               + "Несколько через запятую. Пусто — урок у всего класса." },
         { key: "тип", label: "Тип", type: "select", options: input.options.lesson_kinds, width: "w-36" },
         { key: "кабинет", label: "Кабинет", type: "select", options: ["—", ...input.options.room_kinds], width: "w-40",
           title: "Только когда подгруппы расходятся по разным кабинетам (труд). Иначе «—»." },

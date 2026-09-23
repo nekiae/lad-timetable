@@ -6,6 +6,7 @@
 """
 
 import json
+import re
 import time
 from pathlib import Path
 
@@ -152,7 +153,8 @@ def blank_tables() -> dict[str, pd.DataFrame]:
                                "классов сразу": [1]}),
         "load": pd.DataFrame({"класс": ["5А"], "предмет": ["Математика"],
                               "учитель": ["Иванова И.И."], "часов": [5], "подгруппа": [""],
-                              "уровень": ["базовый"], "тип": ["урок"], "кабинет": [NONE_CHOICE]}),
+                              "уровень": ["базовый"], "тип": ["урок"], "кабинет": [NONE_CHOICE],
+                              "поток": [""]}),
     }
 
 
@@ -386,10 +388,18 @@ def build_school(tables: dict[str, pd.DataFrame], settings: dict,
         room_kind = ROOM_KINDS.get(optional(row.get("кабинет")))
         level = LEVELS.get(str(row.get("уровень") or "").strip(), Level.BASE)
         kind = LESSON_KINDS.get(str(row.get("тип") or "").strip(), LessonKind.REGULAR)
+        # «поток» — через запятую: у базовой химии может сидеть и гуманитарный
+        # поток, и физмат, если на профильную химию ушли только биохимики.
+        # optional(), а не str(): пустая ячейка приходит из таблицы как NaN,
+        # и str(NaN) даёт поток с именем «nan», общий для всех строк школы —
+        # 137 ложных конфликтов на первом же прогоне (23.09.2026).
+        streams = tuple(sorted({s.strip() for s in re.split(r"[,;]", optional(row.get("поток")) or "")
+                                if s.strip() and s.strip() != NONE_CHOICE}))
         load.append(LoadItem(group_id=gid, subject_id=subject_ids[subject_name],
                              teacher_id=teacher_ids[teacher_name],
                              hours_per_week=int(row.get("часов") or 0),
-                             level=level, kind=kind, room_kind=room_kind))
+                             level=level, kind=kind, room_kind=room_kind,
+                             streams=streams))
 
     # Профильный класс не нужно отмечать галочкой отдельно: если хоть один
     # предмет изучается на повышенном уровне, класс профильный по определению.
@@ -644,6 +654,46 @@ def check_norms(school: School) -> list[str]:
             f"Уроки меньшей группы встанут внутрь часов большей, а оставшиеся "
             f"{hours[-1] - hours[0]} ч она свободна — проверьте, чем она занята"
         )
+
+    # Потоки, заданные наполовину. Если у класса школа назвала сочетания,
+    # а профильная строка осталась без потока, она считается уроком всех детей
+    # и запретит параллель, ради которой потоки и вводились. Молча это не видно:
+    # расписание просто выйдет теснее, чем могло.
+    for c in school.classes:
+        streams_here = school.class_streams(c.id)
+        if not streams_here:
+            continue
+        loose = sorted({subject_name_by_id.get(item.subject_id, item.subject_id)
+                        for item in school.load
+                        if school.group(item.group_id).class_ids == [c.id]
+                        and item.level != Level.BASE and not item.streams})
+        if loose:
+            warnings.append(
+                f"{c.name}: потоки заданы ({', '.join(sorted(streams_here))}), но у профильных "
+                f"строк {', '.join(loose)} поток не указан — они займут всех детей класса "
+                f"и не дадут поставить что-то параллельно")
+        # Поток обязан поместиться в свою смену: у него те же часы в неделе,
+        # что у класса, только своих уроков может быть больше.
+        start, end = school.window(c.shift)
+        lesson_days = len([d for d, kind in school.day_kinds.items() if kind == DayKind.LESSONS])
+        for stream in sorted(streams_here):
+            whole_h = sum(i.hours_per_week for i in school.load
+                          if school.group(i.group_id).class_ids == [c.id]
+                          and school.group(i.group_id).part is None)
+            per_subject: dict[str, int] = {}
+            for item in school.load:
+                group = school.group(item.group_id)
+                if group.class_ids != [c.id] or group.part is None:
+                    continue
+                if item.streams and stream not in item.streams:
+                    continue
+                per_subject[item.subject_id] = max(per_subject.get(item.subject_id, 0),
+                                                   item.hours_per_week)
+            hours = whole_h + sum(per_subject.values())
+            places = (end - start + 1) * lesson_days
+            if hours > places:
+                warnings.append(f"{c.name}, поток «{stream}»: {hours} уроков в неделю "
+                                f"при {places} местах в сетке — не поместится")
 
     # Физкультура: норма «не два дня подряд» (п. 94 ССЭТ) сама ограничивает
     # число часов. В пятидневку без двух дней подряд помещается максимум три

@@ -30,7 +30,7 @@ from dataclasses import dataclass, field, replace
 
 from ortools.sat.python import cp_model
 
-from .model import Lesson, Level, RoomKind, School, Shift, Slot
+from .model import ALL_STREAMS, Lesson, Level, RoomKind, School, Shift, Slot, lesson_streams
 
 
 @dataclass
@@ -787,8 +787,40 @@ def _solve(
                     by_subject.get(item.subject_id, 0), item.hours_per_week)
         class_week_hours[class_id] = hours + sum(by_subject.values())
 
+    # С потоками разные предметы идут параллельно, и сумма выше завышает
+    # неделю класса: коридор дня уезжал бы вверх и требовал лишних уроков.
+    # Класс занят, пока занят хоть один поток, поэтому оценка снизу — самый
+    # загруженный поток.
+    for class_id in whole:
+        streams_here = school.class_streams(class_id)
+        if not streams_here:
+            continue
+        rows_of_class = whole[class_id] + [i for (cid, _), v in parts.items()
+                                           if cid == class_id for i in v]
+        busiest = 0
+        for stream in streams_here:
+            per_subject: dict[str, int] = {}
+            total = 0
+            for i in rows_of_class:
+                item = school.load[i]
+                if stream not in lesson_streams(item, streams_here):
+                    continue
+                if school.group(item.group_id).part is None:
+                    total += item.hours_per_week
+                else:
+                    per_subject[item.subject_id] = max(per_subject.get(item.subject_id, 0),
+                                                       item.hours_per_week)
+            busiest = max(busiest, total + sum(per_subject.values()))
+        class_week_hours[class_id] = busiest
+
     for class_id, whole_indices in whole.items():
-        part_groups = [v for (cid, _), v in parts.items() if cid == class_id]
+        # Строки с потоками сюда не идут: одно и то же имя «повышенная» у истории
+        # и у математики — это разные дети, и запрещать им один час по имени
+        # значит отнимать у школы законную параллель. Их судит правило потоков
+        # ниже (HARD-2б) — по составу детей, а не по названию группы.
+        part_groups = [[i for i in v if not school.load[i].streams]
+                       for (cid, _), v in parts.items() if cid == class_id]
+        part_groups = [v for v in part_groups if v]
         for slot in slots:
             # целый класс — максимум один урок в слот
             model.Add(sum(x[i, slot] for i in whole_indices) <= 1)
@@ -865,47 +897,98 @@ def _solve(
     # правила «один предмет в час» живёт здесь, а в penalties попадает ниже.
     deferred_penalties: list = []
 
-    # --- HARD-2б: в один час у класса идёт ОДИН предмет.
+    # --- HARD-2б: в один час у одних и тех же детей — один урок.
     #
-    # HARD-2 запрещает классу два урока разом и одной подгруппе — два урока.
-    # Но подгруппа опознаётся по имени, а деления режут класс по-разному:
-    # «первая группа» по информатике и «повышенная» по математике — это одни
-    # и те же дети. Модель считала их разными половинами класса и спокойно
-    # ставила им два предмета в один час. На готовой сетке Жемчужненской таких
-    # слотов оказалось четырнадцать: у 10«А» во вторник седьмым уроком стояли
-    # одновременно допризывная двумя группами И математика двумя группами
-    # (найдено 22.09.2026).
+    # История правила. Сначала модель судила по имени подгруппы, и «первая
+    # группа» информатики с «повышенной» математикой считались разными
+    # половинами класса: у 10«А» в один час стояли допризывная и математика
+    # (найдено 22.09.2026). Тогда запретили два предмета в час у класса вообще —
+    # безопасно, но грубо: завуч Жемчужненской объяснила (23.09.2026), что
+    # химия у одних детей и общество у других идут параллельно законно,
+    # а вот английский и общество у одних и тех же детей — нет.
     #
-    # Считаем по предметам: в слоте у класса занят максимум один. Наложение
-    # двух делений разных предметов запрещено — кроме школ, где само деление
-    # записано двумя предметами («допризывная» у юношей и «медицинская»
-    # у девушек). Там правило выключают.
+    # Теперь правило говорит о детях. Урок касается набора потоков (lesson_streams):
+    # своих, если школа их назвала, иначе всех. Подгруппы одного предмета без
+    # потоков — одно событие (они и так стоят синхронно, HARD-9). В один час
+    # у каждого потока — не больше одного события. Если школа потоков не называла,
+    # у класса один поток «весь класс», и это ровно прежнее «один предмет в час».
     for class_id, whole_rows in whole.items():
         if crule("one_subject_at_once", rules.one_subject_at_once, class_id) == "off":
             continue
-        by_subject: dict[str, list[int]] = defaultdict(list)
+        streams_here = school.class_streams(class_id)
+        # События класса: (строки, каких потоков касается).
+        events: list[tuple[list[int], frozenset[str]]] = []
+        plain_by_subject: dict[str, list[int]] = defaultdict(list)
         for (cid, _), rows_of_part in parts.items():
             if cid != class_id:
                 continue
             for i in rows_of_part:
-                by_subject[school.load[i].subject_id].append(i)
-        if len(by_subject) < 2:
-            continue  # одно деление — накладываться не на что
+                if school.load[i].streams:
+                    events.append(([i], lesson_streams(school.load[i], streams_here)))
+                else:
+                    plain_by_subject[school.load[i].subject_id].append(i)
+        for rows_of_subject in plain_by_subject.values():
+            events.append((rows_of_subject, lesson_streams(school.load[rows_of_subject[0]],
+                                                           streams_here)))
+        # Урок всего класса касается всех потоков. Без потоков его уже держит
+        # HARD-2 (целый класс против подгруппы), а с потоками — только здесь.
+        if streams_here and whole_rows:
+            events.append((whole_rows, streams_here))
+        if len(events) < 2:
+            continue
         hard_here = crule("one_subject_at_once", rules.one_subject_at_once, class_id) == "hard"
+        every = streams_here or frozenset({ALL_STREAMS})
         for slot in slots:
-            here = []
-            for subject_id, rows_of_subject in by_subject.items():
-                var = model.NewBoolVar(f"sub_{class_id}_{subject_id}_{slot}")
-                model.AddMaxEquality(var, [x[i, slot] for i in rows_of_subject])
-                here.append(var)
-            if hard_here:
-                model.Add(sum(here) <= 1)
-            else:
-                over = model.NewIntVar(0, len(here), f"subover_{class_id}_{slot}")
-                model.Add(over >= sum(here) - 1)
-                # Штрафы собираются ниже, поэтому мягкий вариант откладываем.
-                deferred_penalties.append((over, 40))
-                trackers["Два предмета в один час"].append(over)
+            # Переменная на каждое событие — даже на одиночную строку. Так модель
+            # школы без потоков совпадает с прежней до буквы: брать x напрямую
+            # логически то же самое, но меняет путь поиска, и на школе из примера
+            # норма переставала закрываться за 120 с (замер 23.09.2026: 0 → 1).
+            on = []
+            for n, (rows, _) in enumerate(events):
+                var = model.NewBoolVar(f"ev_{class_id}_{n}_{slot}")
+                model.AddMaxEquality(var, [x[i, slot] for i in rows])
+                on.append(var)
+            for stream in every:
+                touching = [on[n] for n, (_, reach) in enumerate(events) if stream in reach]
+                if len(touching) < 2:
+                    continue
+                if hard_here:
+                    model.Add(sum(touching) <= 1)
+                else:
+                    over = model.NewIntVar(0, len(touching), f"subover_{class_id}_{stream}_{slot}")
+                    model.Add(over >= sum(touching) - 1)
+                    deferred_penalties.append((over, 40))
+                    trackers["Два урока у одних детей"].append(over)
+
+    # --- HARD-8в: у каждого потока нет окон.
+    # Класс без окон — ещё не значит, что без окон каждый поток: гуманитарии
+    # могут сидеть и ждать, пока физмат на своей профильной математике.
+    # Требование то же, что для класса: занятость потока идёт подряд с начала
+    # дня. Кончить раньше поток может — «у базы уроки заканчиваются четвёртым,
+    # а профили до шестого», — а прерваться нет.
+    # Раньше так нельзя было: без потоков модель не знала, кто с кем сидит,
+    # и такая проверка сделала школу нерешаемой (22.09.2026). Теперь школа
+    # называет потоки сама, и правило становится точным.
+    for class_id, whole_rows in whole.items():
+        streams_here = school.class_streams(class_id)
+        if not streams_here:
+            continue
+        rows_of_class = whole_rows + [i for (cid, _), v in parts.items() if cid == class_id for i in v]
+        first_period, last_period = school.class_window(class_id)
+        for stream in streams_here:
+            mine = [i for i in rows_of_class
+                    if stream in lesson_streams(school.load[i], streams_here)]
+            if not mine:
+                continue
+            present = {}
+            for slot in slots:
+                var = model.NewBoolVar(f"sb_{class_id}_{stream}_{slot}")
+                model.AddMaxEquality(var, [x[i, slot] for i in mine])
+                present[slot] = var
+            for day in {sl.day for sl in slots}:
+                for period in range(first_period, last_period):
+                    model.Add(present[Slot(day, period, shift)]
+                              >= present[Slot(day, period + 1, shift)])
 
     # --- HARD-8б: лишний час профиля — в конец дня, а не в середину.
     #

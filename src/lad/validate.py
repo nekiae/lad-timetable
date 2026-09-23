@@ -12,6 +12,7 @@
 from collections import defaultdict
 from dataclasses import dataclass, field
 
+from .model import ALL_STREAMS, lesson_streams
 from .model import Lesson, School
 
 
@@ -124,19 +125,43 @@ def check(school: School, lessons: list[Lesson]) -> Report:
                           f"а помещается {seats}", str(slot))
             )
 
-    # HARD-2: у класса два урока сразу.
-    # Деление — законное исключение: две подгруппы одного класса имеют право
-    # стоять в одном слоте. Нарушение — когда пересекаются целый класс и подгруппа,
-    # либо две группы с одинаковой частью.
+    # HARD-2: у одних и тех же детей два урока сразу.
+    # Судим по детям, а не по имени подгруппы: «повышенная» история и
+    # «повышенная» математика бывают разными потоками и законно идут в один час,
+    # а английский и общество у одного потока — нет. Подгруппы одного предмета
+    # без потоков — одно деление: вместе им можно, но только с разными именами.
+    # Ключ — с предметом: у целого класса один учитель ведёт и язык,
+    # и литературу, и без предмета строки затирали друг друга.
+    item_of = {(item.group_id, item.subject_id, item.teacher_id): item for item in school.load}
     for (class_id, slot), items in class_slots.items():
         if len(items) < 2:
             continue
-        groups = [school.group(i.group_id) for i in items]
-        parts = [g.part for g in groups]
-        if any(p is None for p in parts) or len(set(parts)) != len(parts):
+        streams_here = school.class_streams(class_id)
+        events: list[tuple[str, frozenset[str]]] = []
+        plain: dict[str, list] = defaultdict(list)
+        for lesson in items:
+            load_item = item_of.get((lesson.group_id, lesson.subject_id, lesson.teacher_id))
+            group = school.group(lesson.group_id)
+            if load_item is not None and load_item.streams:
+                events.append((lesson.subject_id, lesson_streams(load_item, streams_here)))
+            elif group.part is None:
+                events.append((lesson.subject_id, streams_here or frozenset({ALL_STREAMS})))
+            else:
+                plain[lesson.subject_id].append(group.part)
+        broken = False
+        for subject_id, names in plain.items():
+            if len(set(names)) != len(names):
+                broken = True  # две группы с одним именем — это не деление
+            events.append((subject_id, streams_here or frozenset({ALL_STREAMS})))
+        seen: set[str] = set()
+        for _, reach in events:
+            if seen & reach:
+                broken = True
+            seen |= reach
+        if broken:
             report.violations.append(
                 Violation("HARD-2", f"у класса {class_id} {len(items)} урока одновременно "
-                                    "(не деление на подгруппы)", str(slot))
+                                    "у одних и тех же детей", str(slot))
             )
 
     # --- окна

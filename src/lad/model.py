@@ -278,6 +278,14 @@ class LoadItem:
     # в мастерской, у девочек в кабинете обслуживающего труда. Предмет один
     # (иначе подгруппы не встанут синхронно), а кабинеты разные.
     room_kind: "RoomKind | None" = None
+    # ПОТОКИ — какие группы детей сидят на этом уроке. Имя подгруппы
+    # («повышенная», «1») живёт внутри одного предмета и ничего не говорит
+    # о детях: «повышенная» история и «повышенная» математика бывают разными
+    # детьми, а «повышенная» история и «повышенный» английский — одними и теми
+    # же. Школа называет такие группы сочетаниями: «гуманитарии», «физмат».
+    # Пусто — урок у всех детей класса (или у подгруппы, про состав которой
+    # школа ничего не сказала, — тогда считаем, что там дети из всех потоков).
+    streams: tuple[str, ...] = ()
 
 
 @dataclass
@@ -450,5 +458,36 @@ class School:
             for period in range(1, self.periods_per_day + 1)
         ]
 
+    def class_streams(self, class_id: str) -> frozenset[str]:
+        """Потоки класса — все имена, которые встречаются в его нагрузке."""
+        # Считается один раз на школу: вызывается в каждом цикле солвера
+        # и валидатора, а group() ищет группу перебором.
+        cache = self.__dict__.setdefault("_streams_cache", {})
+        if not cache:
+            groups = {g.id: g for g in self.groups}
+            for item in self.load:
+                for cid in groups[item.group_id].class_ids:
+                    cache.setdefault(cid, set()).update(item.streams)
+            for cid in list(cache):
+                cache[cid] = frozenset(cache[cid])
+        return cache.get(class_id, frozenset())
+
     def group(self, group_id: str) -> StudyGroup:
         return next(g for g in self.groups if g.id == group_id)
+
+
+# Поток «весь класс» для класса, где школа потоков не называла: тогда любой
+# урок касается всех детей, и правило вырождается в прежнее «один урок в час».
+ALL_STREAMS = "*"
+
+
+def lesson_streams(item: "LoadItem", class_streams: frozenset[str]) -> frozenset[str]:
+    """Каких детей класса касается урок.
+
+    Урок с потоками — только их. Урок без потоков — всех: и уроки всего класса,
+    и подгруппы, про состав которых школа ничего не сказала («1» и «2» по
+    английскому делят класс пополам вперемешку, в каждой есть дети всех потоков).
+    """
+    if item.streams:
+        return frozenset(item.streams)
+    return class_streams or frozenset({ALL_STREAMS})
