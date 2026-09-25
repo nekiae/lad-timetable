@@ -1317,6 +1317,39 @@ def _solve(
           penalties.append((works_day, tw("teacher_day", w.teacher_day, teacher_id)))
           trackers["Выходы в школу"].append(works_day)
 
+          # Ожидание на стыке смен. Окна выше считаются внутри каждой смены,
+          # и два пустых урока между 6-м (первая смена) и 9-м (вторая) не стоили
+          # солверу ничего — туда он и сдвигал ожидания, когда нормы становились
+          # строже. Короткий стык (до SHIFT_SEAM_WAIT уроков) — это окно и стоит
+          # как окно; длинный — учитель ушёл домой, это «день в обе смены» ниже.
+          if len(works_in_shift) > 1:
+              axis = range(1, school.periods_per_day + 1)
+              tag = f"{teacher_id}_{day}_seam"
+              any_busy, d_started, d_rest, d_present = {}, {}, {}, {}
+              for period in axis:
+                  parts = [busy[period] for _, busy in works_in_shift.values() if period in busy]
+                  any_busy[period] = model.NewBoolVar(f"ab_{tag}_{period}")
+                  model.AddMaxEquality(any_busy[period], parts or [model.NewConstant(0)])
+                  d_started[period] = model.NewBoolVar(f"dst_{tag}_{period}")
+                  d_rest[period] = model.NewBoolVar(f"drs_{tag}_{period}")
+                  d_present[period] = model.NewBoolVar(f"dpr_{tag}_{period}")
+              for period in axis:
+                  model.Add(d_started[period] >= any_busy[period])
+                  model.Add(d_rest[period] >= any_busy[period])
+                  if period > 1:
+                      model.Add(d_started[period] >= d_started[period - 1])
+                  if period < school.periods_per_day:
+                      model.Add(d_rest[period] >= d_rest[period + 1])
+                  model.Add(d_present[period] >= d_started[period] + d_rest[period] - 1)
+              seam = model.NewIntVar(-school.periods_per_day, school.periods_per_day, f"seam_{tag}")
+              model.Add(seam == sum(d_present.values()) - sum(any_busy.values()) - sum(day_gaps))
+              short = model.NewBoolVar(f"seamshort_{tag}")
+              model.Add(seam >= SHIFT_SEAM_WAIT + 1).OnlyEnforceIf(short.Not())
+              waited = model.NewIntVar(0, SHIFT_SEAM_WAIT, f"seamwait_{tag}")
+              model.Add(waited >= seam).OnlyEnforceIf(short)
+              penalties.append((waited, tw("teacher_gap", w.teacher_gap, teacher_id)))
+              trackers["Окна у учителей"].append(waited)
+
           # Работа в обе смены: пришёл к восьми, ушёл в семь вечера. Это не
           # окна (между сменами учитель уходит), но и не бесплатно, поэтому
           # штраф отдельный и берётся один раз за день.

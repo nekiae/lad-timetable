@@ -12,7 +12,7 @@
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from .model import ALL_STREAMS, lesson_streams
+from .model import SHIFT_SEAM_WAIT, ALL_STREAMS, lesson_streams
 from .model import Lesson, School
 
 
@@ -173,6 +173,17 @@ def check(school: School, lessons: list[Lesson]) -> Report:
         report.class_gaps += len(set(range(first, max(periods) + 1)) - periods)
     for periods in teacher_busy.values():
         report.teacher_gaps += len(set(range(min(periods), max(periods) + 1)) - periods)
+    # Ожидание на стыке смен — окно, если оно короткое (см. SHIFT_SEAM_WAIT).
+    for (teacher_id, day), shifts in teacher_shifts.items():
+        if len(shifts) < 2:
+            continue
+        per_shift = [teacher_busy[teacher_id, day, sh] for sh in shifts]
+        every = set().union(*per_shift)
+        through = len(set(range(min(every), max(every) + 1)) - every)
+        inside = sum(len(set(range(min(p), max(p) + 1)) - p) for p in per_shift)
+        seam = max(0, through - inside)
+        if seam <= SHIFT_SEAM_WAIT:
+            report.teacher_gaps += seam
     # Выход в школу — один на день, даже если учитель работал в обе смены.
     report.teacher_days = len(teacher_shifts)
     report.teacher_both_shifts = sum(1 for shifts in teacher_shifts.values() if len(shifts) > 1)
