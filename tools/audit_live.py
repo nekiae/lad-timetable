@@ -30,7 +30,7 @@ SHOW = 4  # сколько примеров показывать на кажду
 
 def main(school_id: str) -> int:
     found = db.get_school(school_id)
-    row = db.latest_schedule(school_id)
+    row = db.get_schedule(sys.argv[2]) if len(sys.argv) > 2 else db.latest_schedule(school_id)
     if not found or not row:
         print("нет школы или расписания")
         return 1
